@@ -10,9 +10,13 @@ import asyncio
 from pathlib import Path
 from vulntrace.sandbox.pipeline import VerificationPipeline
 from vulntrace.models import VerificationPipelineRequest
+from vulntrace.config import settings
 
 @pytest.mark.asyncio
 async def test_contextual_reasoning_nemotron_vs_blind_ast():
+    if not settings.has_nebius:
+        pytest.skip("NEBIUS_API_KEY not configured in environment or .env; skipping live Nemotron test.")
+
     repo_path = (Path(__file__).resolve().parent.parent / "benchmarks" / "contextual_reasoning").resolve()
     assert repo_path.exists()
 
