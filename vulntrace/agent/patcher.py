@@ -73,6 +73,7 @@ class RemediationPatcher:
         explanation = "Replaced unsafe yaml.load with yaml.safe_load via AST deterministic transformer."
         tokens_used = None
         reasoning_tokens = None
+        model_name = None
 
         # 1. Attempt live Nemotron inference if requested
         if req.use_nemotron:
@@ -93,10 +94,11 @@ class RemediationPatcher:
                     )
             else:
                 try:
+                    advisory = req.advisory_summary or f"Remediate {req.cve_id} in {req.target_file}: unsafe {req.vulnerable_call} deserialization."
                     nem_res = await client.generate_patch_suggestion(
                         cve_id=req.cve_id,
                         vulnerable_code=orig_code,
-                        advisory_summary=f"Remediate {req.cve_id} in {req.target_file}: unsafe {req.vulnerable_call} deserialization."
+                        advisory_summary=advisory
                     )
                     if not nem_res.get("success"):
                         if not req.allow_ast_fallback:
@@ -171,6 +173,7 @@ class RemediationPatcher:
                             else:
                                 patched_code = code_part
                                 engine_used = "NVIDIA_NEMOTRON_3_ULTRA"
+                                model_name = nem_res.get("model")
                                 explanation = content.split("```")[-1].strip() or "Synthesized surgical remediation using Nemotron 3 Ultra."
                 except Exception as e:
                     if not req.allow_ast_fallback:
@@ -241,5 +244,6 @@ class RemediationPatcher:
             latency_ms=round(dt, 2),
             success=True,
             validation_status="ACCEPTED",
-            patch_delta=patch_delta_meta
+            patch_delta=patch_delta_meta,
+            model_name=model_name
         )

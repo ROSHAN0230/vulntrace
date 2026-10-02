@@ -36,6 +36,8 @@ from vulntrace.analyzer.ast_visitor import AstReachabilityAnalyzer
 from vulntrace.agent.harness_synthesizer import HarnessSynthesizer
 from vulntrace.agent.patcher import RemediationPatcher
 from vulntrace.engine.verdict_engine import VerdictEngine
+from vulntrace.intel.tavily_client import TavilyClient
+from vulntrace.config import settings
 
 class VerificationPipeline:
     """Executes end-to-end controlled defensive verification in disposable sandboxes."""
@@ -212,6 +214,26 @@ class VerificationPipeline:
 
             emit("STATE_TRANSITION", "AST", f"REACHABLE VULNERABLE CALL PATH IDENTIFIED: Call graph path discovered to {resolved_target_file}:{resolved_target_func}()")
 
+            # Threat Intelligence Query via Tavily
+            tavily_findings = []
+            tavily_latency_ms = None
+            if getattr(req, "query_tavily", True) and settings.has_tavily:
+                emit("STAGE_START", "INTEL", f"Querying Tavily Threat Intelligence for real-time CVE advisories and PoCs for {req.cve_id}...")
+                t_tav0 = time.perf_counter()
+                try:
+                    tavily_client = TavilyClient()
+                    tavily_findings = await tavily_client.search_cve_pocs(req.cve_id)
+                    tavily_latency_ms = round((time.perf_counter() - t_tav0) * 1000.0, 2)
+                    emit("STAGE_COMPLETE", "INTEL", f"Tavily returned {len(tavily_findings)} security intelligence sources ({tavily_latency_ms}ms).")
+                    for finding in tavily_findings[:2]:
+                        emit("LOG", "INTEL", f"Tavily Source: {finding.title} ({finding.url})")
+                except Exception as e:
+                    emit("LOG", "INTEL", f"Tavily threat intelligence query failed: {e}")
+
+            advisory_ev.pocs_count = len(tavily_findings)
+            advisory_ev.pocs = tavily_findings
+            advisory_ev.tavily_latency_ms = tavily_latency_ms
+
             # Stage 1: Harness Synthesis
             emit("STAGE_START", "HARNESS", f"Synthesizing controlled verification harness for {req.cve_id}...")
             harness_req = HarnessGenerateRequest(
@@ -327,12 +349,23 @@ class VerificationPipeline:
 
             # Stage 3: Remediation Synthesis & Application
             emit("STAGE_START", "PATCH", f"Synthesizing surgical remediation (Nemotron: {req.use_nemotron})...")
+            
+            # Incorporate Tavily threat intelligence into advisory prompt for Nemotron
+            advisory_context = req.advisory_summary or f"Remediate {req.cve_id} in {resolved_target_file}:{resolved_target_func}(): unsafe {resolved_vuln_sym} deserialization."
+            if tavily_findings:
+                advisory_context += f"\n\nReal-Time Threat Intelligence & Exploitation Context (via Tavily Search):\n"
+                for idx, finding in enumerate(tavily_findings[:3], 1):
+                    advisory_context += f"[{idx}] {finding.title}\nURL: {finding.url}\nContext: {finding.snippet}\n\n"
+                advisory_context += "Analyze this vulnerability context and synthesize a secure, minimal patch that prevents this exploit without breaking valid application data structures or custom loader handlers."
+                emit("LOG", "PATCH", f"Incorporated {min(len(tavily_findings), 3)} Tavily threat intelligence references into Nemotron reasoning context.")
+
             rem_req = RemediationRequest(
                 repo_path=str(disposable_dir),
                 cve_id=req.cve_id,
                 target_file=resolved_target_file,
                 vulnerable_call=resolved_vuln_sym,
-                use_nemotron=req.use_nemotron
+                use_nemotron=req.use_nemotron,
+                advisory_summary=advisory_context
             )
             remediation_res = await RemediationPatcher.synthesize_remediation(rem_req, workspace_dir=disposable_dir)
 
@@ -476,6 +509,28 @@ class VerificationPipeline:
             dt_total = (time.perf_counter() - t0) * 1000.0
             emit("STATE_TRANSITION", "VERDICT", f"FINAL BEHAVIORAL VERDICT: {final_verdict} (Total pipeline: {round(dt_total, 2)}ms)")
 
+            # Assemble comprehensive, multi-layer evidence record
+            pipeline_evidence = dict(post_res.structured_evidence or pre_res.structured_evidence or {})
+            if tavily_findings:
+                pipeline_evidence["tavily_threat_intelligence"] = {
+                    "provider": "Tavily Search API",
+                    "endpoint": "https://api.tavily.com/search",
+                    "status": "HTTP_200_OK",
+                    "latency_ms": tavily_latency_ms,
+                    "pocs_found_count": len(tavily_findings),
+                    "sources": [{"title": f.title, "url": f.url} for f in tavily_findings]
+                }
+            if remediation_res.engine == "NVIDIA_NEMOTRON_3_ULTRA":
+                pipeline_evidence["nebius_nemotron_inference"] = {
+                    "provider": "Nebius Token Factory",
+                    "endpoint": "https://api.tokenfactory.nebius.com/v1/chat/completions",
+                    "model": remediation_res.model_name or "nvidia/Nemotron-3-Ultra-550b-a55b",
+                    "tokens_used": remediation_res.tokens_used,
+                    "reasoning_tokens": remediation_res.reasoning_tokens,
+                    "latency_ms": remediation_res.latency_ms,
+                    "validation_status": remediation_res.validation_status
+                }
+
             return VerificationPipelineResponse(
                 cve_id=req.cve_id,
                 repo_path=str(source_repo),
@@ -486,7 +541,7 @@ class VerificationPipeline:
                 post_patch_result=post_res,
                 regression_tests=regression_res,
                 final_behavioral_verdict=final_verdict,
-                structured_evidence=post_res.structured_evidence or pre_res.structured_evidence,
+                structured_evidence=pipeline_evidence,
                 verdict_record=verdict_record,
                 sandbox_engine="LOCAL_SUBPROCESS_FALLBACK",
                 cloud_status="PERMISSION_DENIED (HTTP 403)",

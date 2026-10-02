@@ -160,6 +160,7 @@ class RemediationRequest(BaseModel):
     vulnerable_call: str
     use_nemotron: bool = True
     allow_ast_fallback: bool = False
+    advisory_summary: Optional[str] = None
 
 class PatchDeltaMetadata(BaseModel):
     changed_files: List[str] = Field(default_factory=list)
@@ -185,6 +186,7 @@ class RemediationResponse(BaseModel):
     success: bool
     validation_status: Optional[str] = None  # "ACCEPTED", "REJECTED_SYNTAX_ERROR", "REJECTED_EMPTY", "SKIPPED"
     patch_delta: Optional[PatchDeltaMetadata] = None
+    model_name: Optional[str] = None
     error: Optional[str] = None
 
 class BenchmarkScenarioInfo(BaseModel):
@@ -208,6 +210,8 @@ class VerificationPipelineRequest(BaseModel):
     sentinel_filename: Optional[str] = None
     entrypoints: List[str] = Field(default_factory=list)
     use_nemotron: bool = True
+    query_tavily: bool = True
+    advisory_summary: Optional[str] = None
 
 # --- Formal Evidence Schema (Phase 4) ---
 class RepositoryEvidence(BaseModel):
@@ -224,7 +228,9 @@ class AdvisoryEvidence(BaseModel):
     affected_packages: List[AffectedPackage] = Field(default_factory=list)
     cvss_score: Optional[float] = None
     pocs_count: int = 0
+    pocs: List[PocFinding] = Field(default_factory=list)
     source_url: str
+    tavily_latency_ms: Optional[float] = None
 
 class ReachabilityEvidence(BaseModel):
     target_symbol: str
