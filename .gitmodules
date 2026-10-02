@@ -1,0 +1,6 @@
+[submodule "real_world_eval/flasgger"]
+	path = real_world_eval/flasgger
+	url = https://github.com/flasgger/flasgger.git
+[submodule "real_world_eval/cookiecutter"]
+	path = real_world_eval/cookiecutter
+	url = https://github.com/cookiecutter/cookiecutter.git

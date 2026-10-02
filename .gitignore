@@ -1,0 +1,48 @@
+# Environments & Secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+*.token
+
+# Python Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+*.spec
+
+# Node.js & Frontend Build Artifacts
+node_modules/
+ui/node_modules/
+dist/
+ui/dist/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS & Editor Junk
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temporary Verification & Execution Artifacts
+temp_repos/
+*.marker
+sentinel_*
+*.log
