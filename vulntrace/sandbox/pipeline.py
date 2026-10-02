@@ -214,19 +214,27 @@ class VerificationPipeline:
 
             emit("STATE_TRANSITION", "AST", f"REACHABLE VULNERABLE CALL PATH IDENTIFIED: Call graph path discovered to {resolved_target_file}:{resolved_target_func}()")
 
-            # Threat Intelligence Query via Tavily
+            # Threat Intelligence Query via Tavily with Strict Relevance Filtering
+            tavily_report = None
             tavily_findings = []
             tavily_latency_ms = None
             if getattr(req, "query_tavily", True) and settings.has_tavily:
                 emit("STAGE_START", "INTEL", f"Querying Tavily Threat Intelligence for real-time CVE advisories and PoCs for {req.cve_id}...")
-                t_tav0 = time.perf_counter()
                 try:
                     tavily_client = TavilyClient()
-                    tavily_findings = await tavily_client.search_cve_pocs(req.cve_id)
-                    tavily_latency_ms = round((time.perf_counter() - t_tav0) * 1000.0, 2)
-                    emit("STAGE_COMPLETE", "INTEL", f"Tavily returned {len(tavily_findings)} security intelligence sources ({tavily_latency_ms}ms).")
+                    tavily_report = await tavily_client.search_with_relevance(req.cve_id, max_results=6)
+                    tavily_findings = tavily_report.findings
+                    tavily_latency_ms = tavily_report.latency_ms
+                    
+                    emit("STAGE_COMPLETE", "INTEL", 
+                         f"Tavily search completed: {tavily_report.raw_results_count} raw result(s), "
+                         f"{tavily_report.retained_results_count} verified relevant to {req.cve_id} "
+                         f"({tavily_report.filtered_out_count} excluded) in {tavily_latency_ms}ms.")
+                    
                     for finding in tavily_findings[:2]:
-                        emit("LOG", "INTEL", f"Tavily Source: {finding.title} ({finding.url})")
+                        emit("LOG", "INTEL", f"Verified Relevant Reference: {finding.title} ({finding.url})")
+                    if tavily_report.filtered_out_count > 0:
+                        emit("LOG", "INTEL", f"Relevance Filter: Excluded {tavily_report.filtered_out_count} result(s) not referencing {req.cve_id}.")
                 except Exception as e:
                     emit("LOG", "INTEL", f"Tavily threat intelligence query failed: {e}")
 
@@ -353,11 +361,13 @@ class VerificationPipeline:
             # Incorporate Tavily threat intelligence into advisory prompt for Nemotron
             advisory_context = req.advisory_summary or f"Remediate {req.cve_id} in {resolved_target_file}:{resolved_target_func}(): unsafe {resolved_vuln_sym} deserialization."
             if tavily_findings:
-                advisory_context += f"\n\nReal-Time Threat Intelligence & Exploitation Context (via Tavily Search):\n"
+                advisory_context += f"\n\nReal-Time Verified Threat Intelligence & Exploitation Context (via Tavily Search):\n"
                 for idx, finding in enumerate(tavily_findings[:3], 1):
                     advisory_context += f"[{idx}] {finding.title}\nURL: {finding.url}\nContext: {finding.snippet}\n\n"
                 advisory_context += "Analyze this vulnerability context and synthesize a secure, minimal patch that prevents this exploit without breaking valid application data structures or custom loader handlers."
-                emit("LOG", "PATCH", f"Incorporated {min(len(tavily_findings), 3)} Tavily threat intelligence references into Nemotron reasoning context.")
+                emit("LOG", "PATCH", f"Incorporated {min(len(tavily_findings), 3)} verified-relevant Tavily threat intelligence references into Nemotron reasoning context.")
+            elif tavily_report and tavily_report.raw_results_count > 0:
+                emit("LOG", "PATCH", f"Tavily returned {tavily_report.raw_results_count} results but none matched target {req.cve_id}; proceeding without unverified external intelligence.")
 
             rem_req = RemediationRequest(
                 repo_path=str(disposable_dir),
@@ -511,14 +521,30 @@ class VerificationPipeline:
 
             # Assemble comprehensive, multi-layer evidence record
             pipeline_evidence = dict(post_res.structured_evidence or pre_res.structured_evidence or {})
-            if tavily_findings:
+            if tavily_report:
+                pipeline_evidence["tavily_threat_intelligence"] = {
+                    "provider": "Tavily Search API",
+                    "endpoint": "https://api.tavily.com/search",
+                    "status": "HTTP_200_OK" if tavily_report.status_code == 200 else f"HTTP_{tavily_report.status_code}",
+                    "latency_ms": tavily_report.latency_ms,
+                    "query": tavily_report.query,
+                    "raw_results_count": tavily_report.raw_results_count,
+                    "retained_relevant_count": tavily_report.retained_results_count,
+                    "filtered_out_count": tavily_report.filtered_out_count,
+                    "relevance_criterion": f"Must explicitly mention target '{req.cve_id}' in title, URL, or body content",
+                    "retained_sources": [{"title": f.title, "url": f.url} for f in tavily_findings],
+                    "filtered_out_reasons": tavily_report.rejection_reasons
+                }
+            elif tavily_findings:
                 pipeline_evidence["tavily_threat_intelligence"] = {
                     "provider": "Tavily Search API",
                     "endpoint": "https://api.tavily.com/search",
                     "status": "HTTP_200_OK",
                     "latency_ms": tavily_latency_ms,
-                    "pocs_found_count": len(tavily_findings),
-                    "sources": [{"title": f.title, "url": f.url} for f in tavily_findings]
+                    "raw_results_count": len(tavily_findings),
+                    "retained_relevant_count": len(tavily_findings),
+                    "filtered_out_count": 0,
+                    "retained_sources": [{"title": f.title, "url": f.url} for f in tavily_findings]
                 }
             if remediation_res.engine == "NVIDIA_NEMOTRON_3_ULTRA":
                 pipeline_evidence["nebius_nemotron_inference"] = {

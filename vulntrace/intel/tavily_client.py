@@ -8,7 +8,7 @@ import time
 import httpx
 from typing import List, Optional
 from vulntrace.config import settings
-from vulntrace.models import PocFinding
+from vulntrace.models import PocFinding, TavilySearchReport
 
 class TavilyClient:
     ENDPOINT = "https://api.tavily.com/search"
@@ -17,36 +17,124 @@ class TavilyClient:
         self.api_key = api_key or settings.tavily_api_key
         self.timeout = timeout
 
-    async def search_cve_pocs(self, cve_id: str, max_results: int = 4) -> List[PocFinding]:
-        if not self.api_key:
-            return []
+    @classmethod
+    def is_result_relevant(cls, cve_id: str, title: str, url: str, content: str) -> bool:
+        """
+        Validates whether a raw search result from Tavily actually references the requested CVE.
+        Prevents cross-CVE contamination and generic security writeup false positives.
+        """
+        target = cve_id.lower().strip()
+        corpus = f"{title} {url} {content}".lower()
+        
+        # 1. Direct CVE ID match (e.g., "cve-2020-14343")
+        if target in corpus:
+            return True
+            
+        # 2. Check normalized space/underscore variants
+        target_space = target.replace("-", " ")
+        if target_space in corpus:
+            return True
+            
+        target_underscore = target.replace("-", "_")
+        if target_underscore in corpus:
+            return True
 
+        return False
+
+    async def search_with_relevance(self, cve_id: str, max_results: int = 6) -> TavilySearchReport:
+        """
+        Executes real search on Tavily API and applies strict relevance validation against the requested CVE ID.
+        Returns full transparency report: raw count, retained relevant count, and rejection reasons.
+        """
+        if not self.api_key:
+            return TavilySearchReport(
+                cve_id=cve_id,
+                query="",
+                status_code=401,
+                latency_ms=0.0,
+                raw_results_count=0,
+                retained_results_count=0,
+                filtered_out_count=0,
+                findings=[],
+                rejection_reasons=["Tavily API key not configured."]
+            )
+
+        query_str = f'"{cve_id}" exploit proof of concept advisory GitHub writeup'
         payload = {
             "api_key": self.api_key,
-            "query": f"{cve_id} exploit proof of concept advisory GitHub writeup",
+            "query": query_str,
             "search_depth": "basic",
             "max_results": max_results,
             "include_answer": False
         }
 
+        t0 = time.perf_counter()
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 resp = await client.post(self.ENDPOINT, json=payload)
+                dt = round((time.perf_counter() - t0) * 1000.0, 2)
+                
                 if resp.status_code != 200:
-                    return []
-                    
+                    return TavilySearchReport(
+                        cve_id=cve_id,
+                        query=query_str,
+                        status_code=resp.status_code,
+                        latency_ms=dt,
+                        raw_results_count=0,
+                        retained_results_count=0,
+                        filtered_out_count=0,
+                        findings=[],
+                        rejection_reasons=[f"HTTP {resp.status_code} error from Tavily API."]
+                    )
+
                 data = resp.json()
-                findings: List[PocFinding] = []
-                for item in data.get("results", []):
+                raw_items = data.get("results", [])
+                retained_findings: List[PocFinding] = []
+                rejection_reasons: List[str] = []
+
+                for item in raw_items:
                     title = item.get("title", "Advisory Reference")
                     url = item.get("url", "")
-                    snippet = item.get("content", "")[:280] + "..." if len(item.get("content", "")) > 280 else item.get("content", "")
-                    findings.append(PocFinding(
-                        title=title,
-                        url=url,
-                        snippet=snippet,
-                        source="Tavily Intelligence API"
-                    ))
-                return findings
-        except Exception:
-            return []
+                    content = item.get("content", "")
+                    snippet = content[:280] + "..." if len(content) > 280 else content
+
+                    if self.is_result_relevant(cve_id, title, url, content):
+                        retained_findings.append(PocFinding(
+                            title=title,
+                            url=url,
+                            snippet=snippet,
+                            source="Tavily Intelligence API (Verified Relevant)",
+                            relevant_to_cve=True
+                        ))
+                    else:
+                        rejection_reasons.append(f"Excluded: '{title}' ({url}) does not reference target {cve_id}")
+
+                return TavilySearchReport(
+                    cve_id=cve_id,
+                    query=query_str,
+                    status_code=200,
+                    latency_ms=dt,
+                    raw_results_count=len(raw_items),
+                    retained_results_count=len(retained_findings),
+                    filtered_out_count=len(raw_items) - len(retained_findings),
+                    findings=retained_findings,
+                    rejection_reasons=rejection_reasons
+                )
+        except Exception as e:
+            dt = round((time.perf_counter() - t0) * 1000.0, 2)
+            return TavilySearchReport(
+                cve_id=cve_id,
+                query=query_str,
+                status_code=500,
+                latency_ms=dt,
+                raw_results_count=0,
+                retained_results_count=0,
+                filtered_out_count=0,
+                findings=[],
+                rejection_reasons=[f"Exception during Tavily query: {e}"]
+            )
+
+    async def search_cve_pocs(self, cve_id: str, max_results: int = 6) -> List[PocFinding]:
+        """Convenience method returning only CVE-validated findings."""
+        report = await self.search_with_relevance(cve_id, max_results=max_results)
+        return report.findings

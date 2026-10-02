@@ -58,6 +58,18 @@ class PocFinding(BaseModel):
     url: str
     snippet: str
     source: str
+    relevant_to_cve: bool = True
+
+class TavilySearchReport(BaseModel):
+    cve_id: str
+    query: str
+    status_code: int
+    latency_ms: float
+    raw_results_count: int
+    retained_results_count: int
+    filtered_out_count: int
+    findings: List[PocFinding] = Field(default_factory=list)
+    rejection_reasons: List[str] = Field(default_factory=list)
 
 class CveQueryRequest(BaseModel):
     cve_id: str
