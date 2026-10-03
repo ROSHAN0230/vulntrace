@@ -32,6 +32,7 @@ from vulntrace.models import (
     FinalVerdictRecord
 )
 from vulntrace.sandbox.runner import SubprocessSandboxRunner
+from vulntrace.sandbox.target_env import TargetEnvironmentManager
 from vulntrace.analyzer.ast_visitor import AstReachabilityAnalyzer
 from vulntrace.agent.harness_synthesizer import HarnessSynthesizer
 from vulntrace.agent.patcher import RemediationPatcher
@@ -64,6 +65,18 @@ class VerificationPipeline:
         emit("STAGE_START", "SANDBOX", f"Initializing disposable sandbox workspace for: {source_repo}")
         disposable_dir = SubprocessSandboxRunner.prepare_disposable_workspace(source_repo)
         emit("LOG", "SANDBOX", f"Disposable sandbox mounted at: {disposable_dir}")
+
+        # Controlled Target-Environment Setup Path (P0.2)
+        emit("STAGE_START", "SETUP", f"Detecting target dependencies for {source_repo.name}...")
+        target_env = TargetEnvironmentManager.provision_target_environment(
+            disposable_dir=disposable_dir,
+            on_log=lambda msg: emit("LOG", "SETUP", msg)
+        )
+        target_py = target_env.python_executable
+        if target_env.provisioned:
+            emit("STAGE_COMPLETE", "SETUP", f"Target environment provisioned with {len(target_env.detected_dependencies)} dependencies ({target_env.setup_latency_ms}ms). Network isolation active.")
+        else:
+            emit("LOG", "SETUP", f"Target environment: {target_env.notes}")
 
         try:
             vuln_sym = req.vulnerable_symbol or "yaml.load"
@@ -126,7 +139,7 @@ class VerificationPipeline:
                 emit("LOG", "PIPELINE", "Halting pipeline early: no reachable vulnerable call path detected. Suppressing false alarm.")
 
                 emit("STAGE_START", "REGRESSION", "Running baseline regression tests...")
-                regression_res = SubprocessSandboxRunner.run_pytest(disposable_dir)
+                regression_res = SubprocessSandboxRunner.run_pytest(disposable_dir, python_executable=target_py)
                 emit("STAGE_COMPLETE", "REGRESSION", f"Baseline regression suite completed: {regression_res.get('test_count', 0)} tests passed.")
 
                 dt_total = (time.perf_counter() - t0) * 1000.0
@@ -264,7 +277,8 @@ class VerificationPipeline:
                 disposable_dir=disposable_dir,
                 script_name="harness_verify.py",
                 sentinel_filename=harness_res.sentinel_filename,
-                on_log=lambda msg: emit("LOG", "REPRODUCTION", msg)
+                on_log=lambda msg: emit("LOG", "REPRODUCTION", msg),
+                python_executable=target_py
             )
 
             # Check if pre-patch state could not reproduce (INCONCLUSIVE / GUARD BLOCKED / REJECTED)
@@ -273,7 +287,7 @@ class VerificationPipeline:
                 emit("LOG", "PATCH", "Halting automated patch synthesis: VulnTrace requires confirmed RED state before attempting remediation.")
                 
                 emit("STAGE_START", "REGRESSION", "Running baseline regression tests...")
-                regression_res = SubprocessSandboxRunner.run_pytest(disposable_dir)
+                regression_res = SubprocessSandboxRunner.run_pytest(disposable_dir, python_executable=target_py)
                 emit("STAGE_COMPLETE", "REGRESSION", f"Baseline regression suite completed: {regression_res.get('test_count', 0)} tests passed.")
 
                 empty_post = SandboxExecutionResult(
@@ -456,7 +470,8 @@ class VerificationPipeline:
                 disposable_dir=disposable_dir,
                 script_name="harness_verify.py",
                 sentinel_filename=harness_res.sentinel_filename,
-                on_log=lambda msg: emit("LOG", "VERIFICATION", msg)
+                on_log=lambda msg: emit("LOG", "VERIFICATION", msg),
+                python_executable=target_py
             )
 
             if post_res.reproduction_state == "GREEN_STATE_BLOCKED":
@@ -466,7 +481,7 @@ class VerificationPipeline:
 
             # Stage 5: Regression Testing
             emit("STAGE_START", "REGRESSION", "Executing regression test suite (pytest)...")
-            regression_res = SubprocessSandboxRunner.run_pytest(disposable_dir)
+            regression_res = SubprocessSandboxRunner.run_pytest(disposable_dir, python_executable=target_py)
             if regression_res.get("passed"):
                 emit("STAGE_COMPLETE", "REGRESSION", f"Regression suite PASSED: {regression_res.get('test_count', 0)} tests passed in {regression_res.get('latency_ms')}ms")
             else:

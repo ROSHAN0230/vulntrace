@@ -51,6 +51,7 @@ class HarnessSynthesizer:
 except Exception:
     class _EmptySecBlock(Exception): pass
     sec_block_types = (_EmptySecBlock,)"""
+            benign_payload_expr = '"""\nservice: auth\nport: 9000\nnested:\n  workers: 4\n  debug: false\n"""'
         elif is_pickle_deserialization:
             payload_expr = f'__import__("pickle").dumps(type("Exploit", (), {{"__reduce__": lambda self: (open, ("{sentinel_name}", "w"))}})())'
             import_block = """try:
@@ -60,13 +61,16 @@ except Exception:
 except Exception:
     class _EmptySecBlock(Exception): pass
     sec_block_types = (_EmptySecBlock,)"""
+            benign_payload_expr = '__import__("pickle").dumps({"service": "auth", "port": 9000, "nested": {"workers": 4}})'
         elif is_command_exec or is_code_eval:
             payload_expr = f'"__import__(\'pathlib\').Path(\'{sentinel_name}\').touch()"'
             import_block = """sec_block_types = (ValueError, PermissionError, TypeError)"""
+            benign_payload_expr = '"1 + 1"'
         else:
             payload_expr = f'"""\nexploit: !!python/object/apply:builtins.eval ["open(\'{sentinel_name}\', \'w\').close()"]\n"""'
             import_block = """class _EmptySecBlock(Exception): pass
 sec_block_types = (_EmptySecBlock,)"""
+            benign_payload_expr = '"test_benign_input"'
 
         harness_code = f'''"""
 Automated Behavioral Verification Harness for {req.cve_id}
@@ -78,6 +82,16 @@ import sys
 import os
 import json
 from pathlib import Path
+
+# Network isolation guard: prevent child network access during behavioral verification
+try:
+    import socket
+    def _blocked_socket(*args, **kwargs):
+        raise PermissionError("Network access blocked during sandbox behavioral verification.")
+    socket.socket = _blocked_socket
+    socket.create_connection = _blocked_socket
+except Exception:
+    pass
 
 # Safe domain library imports for typed defensive assertions
 {import_block}
@@ -144,17 +158,50 @@ except sec_block_types as sec_err:
     err_str = str(sec_err)
 
     if not sentinel.exists():
-        print(json.dumps({{
-            "sink_reached": True,
-            "assertion_evaluated": True,
-            "risky_effect_observed": False,
-            "expected_security_exception": True,
-            "unexpected_exception": False,
-            "exception_type": err_name,
-            "assertion": "GREEN_SECURITY_BLOCK_VERIFIED",
-            "detail": f"Expected defensive security block verified: {{err_name}}: {{err_str[:120]}}"
-        }}))
-        sys.exit(42)  # Dedicated exit code for verified defensive block
+        # Positive Control Oracle: Ensure patch did not destroy legitimate functionality
+        try:
+            benign_input = {benign_payload_expr}
+            benign_res = {func_name}(benign_input)
+            if benign_res is None:
+                print(json.dumps({{
+                    "sink_reached": True,
+                    "assertion_evaluated": True,
+                    "risky_effect_observed": False,
+                    "expected_security_exception": False,
+                    "unexpected_exception": True,
+                    "exception_type": "PositiveControlFailure",
+                    "positive_control_passed": False,
+                    "assertion": "POSITIVE_CONTROL_FAILED",
+                    "detail": "Remediation patch destroyed functionality: target function returned None on valid benign input."
+                }}))
+                sys.exit(1)
+
+            print(json.dumps({{
+                "sink_reached": True,
+                "assertion_evaluated": True,
+                "risky_effect_observed": False,
+                "expected_security_exception": True,
+                "unexpected_exception": False,
+                "exception_type": err_name,
+                "positive_control_passed": True,
+                "assertion": "GREEN_SECURITY_BLOCK_VERIFIED",
+                "detail": f"Expected defensive security block verified ({{err_name}}) and positive control passed on benign input."
+            }}))
+            sys.exit(42)  # Dedicated exit code for verified defensive block
+        except Exception as benign_err:
+            b_name = type(benign_err).__name__
+            print(json.dumps({{
+                "sink_reached": True,
+                "assertion_evaluated": True,
+                "risky_effect_observed": False,
+                "expected_security_exception": False,
+                "unexpected_exception": True,
+                "exception_type": b_name,
+                "positive_control_passed": False,
+                "assertion": "POSITIVE_CONTROL_FAILED",
+                "detail": f"Remediation patch destroyed functionality: raised {{b_name}} on valid benign input: {{str(benign_err)[:120]}}"
+            }}))
+            sys.exit(1)
     else:
         print(json.dumps({{
             "sink_reached": True,

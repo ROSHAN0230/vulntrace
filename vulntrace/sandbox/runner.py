@@ -72,6 +72,14 @@ class SubprocessSandboxRunner:
             "PYTHONDONTWRITEBYTECODE": "1"
         }
 
+        # Strict network isolation during behavioral verification
+        safe_env["PIP_NO_INDEX"] = "1"
+        safe_env["PIP_OFFLINE"] = "1"
+        safe_env["HTTP_PROXY"] = "http://0.0.0.0:0"
+        safe_env["HTTPS_PROXY"] = "http://0.0.0.0:0"
+        safe_env["ALL_PROXY"] = "http://0.0.0.0:0"
+        safe_env["NO_PROXY"] = ""
+
         # Double-check: ensure no secret variable slipped into safe_env
         for k in list(safe_env.keys()):
             if any(pat in k.upper() for pat in SECRET_PATTERNS):
@@ -114,7 +122,8 @@ class SubprocessSandboxRunner:
         script_name: str,
         timeout: float = 10.0,
         sentinel_filename: Optional[str] = None,
-        on_log: Optional[Callable[[str], None]] = None
+        on_log: Optional[Callable[[str], None]] = None,
+        python_executable: Optional[str] = None
     ) -> SandboxExecutionResult:
         """
         Executes a Python verification script inside the disposable sandbox.
@@ -147,7 +156,8 @@ class SubprocessSandboxRunner:
                 pass
 
         env = cls.sanitize_environment(disposable_dir)
-        cmd = [cls._get_python_executable(), str(script_path)]
+        py_bin = python_executable or cls._get_python_executable()
+        cmd = [py_bin, str(script_path)]
 
         if on_log:
             on_log(f"Spawning isolated sandbox process: {' '.join(cmd)}")
@@ -228,13 +238,14 @@ class SubprocessSandboxRunner:
             validation_notes = "Subprocess exceeded execution timeout watchdog."
         elif assertion_result == "GREEN_SECURITY_BLOCK_VERIFIED":
             # Parent independently checks for contradictions in child's GREEN claim
+            pos_passed = structured_evidence.get("positive_control_passed", True) if structured_evidence else False
             if sentinel_on_disk:
                 # Contradiction: Child claims blocked, but exploit created sentinel on disk!
                 repro_state = "VERIFICATION_REJECTED"
                 validation_notes = "PARENT AUDIT FAILED: Child claimed GREEN_SECURITY_BLOCK_VERIFIED, but sentinel marker was observed on disk."
-            elif risky_effect or unexpected_exc:
+            elif risky_effect or unexpected_exc or not pos_passed:
                 repro_state = "VERIFICATION_REJECTED"
-                validation_notes = "PARENT AUDIT FAILED: Child claimed GREEN block, but reported risky effect observed or unexpected exception."
+                validation_notes = "PARENT AUDIT FAILED: Child claimed GREEN block, but reported risky effect observed, unexpected exception, or positive control failure."
             elif not expected_sec:
                 repro_state = "VERIFICATION_REJECTED"
                 validation_notes = "PARENT AUDIT FAILED: Child claimed GREEN block, but expected_security_exception was False."
@@ -248,7 +259,7 @@ class SubprocessSandboxRunner:
                 # Genuine verified green block
                 repro_state = "GREEN_STATE_BLOCKED"
                 parent_validated = True
-                validation_notes = "Parent verified: exit code 42, zero sentinel markers, typed security exception evaluated."
+                validation_notes = "Parent verified: exit code 42, zero sentinel markers, typed security exception evaluated, positive control passed."
 
         elif assertion_result == "RED_PASSED":
             if not sentinel_on_disk:
@@ -276,6 +287,9 @@ class SubprocessSandboxRunner:
             repro_state = "RED_STATE_REPRODUCED"
             parent_validated = True
             validation_notes = "Parent verified: sentinel marker created on disk with exit code 0."
+        elif assertion_result == "POSITIVE_CONTROL_FAILED":
+            repro_state = "UNEXPECTED_FAILURE"
+            validation_notes = f"PARENT AUDIT: In-harness positive control failed; remediation broke valid application behavior ({structured_evidence.get('detail', '') if structured_evidence else ''})"
         elif exit_code != 0:
             # Unhandled crash, syntax error, exit 1, or spoofed exit 42 without valid structured assertion
             repro_state = "UNEXPECTED_FAILURE"
@@ -306,7 +320,8 @@ class SubprocessSandboxRunner:
         cls,
         disposable_dir: Path,
         test_file: Optional[str] = None,
-        timeout: float = 15.0
+        timeout: float = 15.0,
+        python_executable: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Executes pytest suite inside disposable workspace for regression verification.
@@ -315,7 +330,8 @@ class SubprocessSandboxRunner:
         disposable_dir = Path(disposable_dir).resolve()
         env = cls.sanitize_environment(disposable_dir)
 
-        cmd = [cls._get_python_executable(), "-m", "pytest"]
+        py_bin = python_executable or cls._get_python_executable()
+        cmd = [py_bin, "-m", "pytest"]
         if test_file:
             cmd.append(test_file)
         cmd.extend(["-v", "--no-header"])

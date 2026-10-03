@@ -10,12 +10,12 @@
 
 ---
 
-## 1. The Core Problem: The SCA False-Positive Crisis
+## 1. The Core Problem: The SCA False-Positive Challenge
 
-Modern Software Composition Analysis (SCA) scanners (e.g. Snyk, Dependabot) match package version strings in lockfiles against vulnerability databases. This creates a severe industry crisis:
-- **Over 80% False Positives:** Most flagged dependencies exist in dead code paths or uncalled library routines that application code never executes.
-- **Alert Fatigue & Blind Bumps:** Developers are forced to either ignore security dashboards or blindly bump dependency versions, frequently breaking production applications.
-- **No Empirical Proof:** Existing tools offer zero proof that an application was actually vulnerable, and zero proof that a patch successfully neutralized the vulnerability without breaking business logic.
+Modern Software Composition Analysis (SCA) scanners match package version strings in manifest and lockfiles against vulnerability databases. While effective for dependency inventory, this creates key operational challenges:
+- **High False-Positive Volume in Manifest Matching:** Flagged dependencies often exist in uncalled dead code paths or unused library submodules that application entrypoints never execute.
+- **Alert Fatigue & Blind Bumps:** Developers are frequently forced to triage dozens of static alerts or blindly bump dependency versions, risking breaking changes in production applications.
+- **Absence of Empirical Proof:** Standard manifest matching does not verify whether a vulnerable call path is reachable or reproducible in the application's runtime context, nor whether a proposed fix preserves business logic.
 
 **VulnTrace replaces heuristic alert noise with a deterministic, parent-audited evidence lifecycle:**
 
@@ -32,36 +32,36 @@ Modern Software Composition Analysis (SCA) scanners (e.g. Snyk, Dependabot) matc
              ↓
    REGRESSION_VERIFIED (Native Pytest Test Suite Executed in Sandbox)
              ↓
-   FORMAL EVIDENCE BUNDLE (Cryptographic SHA-256 JSON & Markdown Verification Certificate)
+   FORMAL EVIDENCE BUNDLE (Deterministic SHA-256 Hashed JSON & Markdown Verification Bundle)
 ```
 
 ---
 
 ## 2. Competitive Advantage Matrix
 
-| Capability / Dimension | Traditional SCA (Snyk / Dependabot) | LLM Coding Agents (Copilot Workspace) | VulnTrace |
+| Capability / Dimension | Traditional SCA (Manifest Scanning) | LLM Coding Agents (Copilot Workspace) | VulnTrace |
 | :--- | :--- | :--- | :--- |
-| **Detection Source** | Lockfile version regex | User prompts / heuristics | Live OSV.dev + Tavily Threat Intel |
-| **Reachability Analysis** | None (flags all manifest matches) | None | Multi-file AST Call-Graph from Entrypoints |
-| **False Positive Suppression** | 0% (flags every match regardless of call) | Heuristic / ungrounded | Automated (uncalled code labeled FP) |
+| **Detection Source** | Lockfile / manifest version regex | User prompts / heuristics | Live OSV.dev + Tavily Threat Intel |
+| **Reachability Analysis** | Manifest matching without call-graph verification | None | Multi-file AST Call-Graph from Entrypoints |
+| **False Positive Suppression** | Manual developer triage | Heuristic / ungrounded | Automated (uncalled dead code labeled FP) |
 | **Behavioral Reproduction** | None | None (hallucination risk) | Automated in isolated disposable sandbox |
 | **Remediation Method** | Major/minor version bump (often breaking) | Full-file LLM rewrite | Surgical minimal AST codemod |
 | **Remediation Quality** | High regression rate | Hallucination / scope creep | Strictly scoped (<= 10 lines, 1 file) |
 | **Post-Patch Trust Boundary** | None | Assumes build passes | **Parent Trust Audit**: Disk sentinel + Exit 42 |
 | **Regression Guarantee** | None | Optional user prompt | Isolated sandbox pytest execution |
-| **Audit Evidence** | Alert list CSV | Transient chat log | Cryptographic JSON bundle + Signed Markdown |
+| **Audit Evidence** | Alert list CSV | Transient chat log | Deterministic SHA-256 Hashed JSON + Structured Markdown |
 
 ---
 
 ## 3. Grounded Evaluation Metrics (Independent Benchmark Suite)
 
-Pursuant to strict evaluation integrity, VulnTrace **does not invent a single ungrounded "accuracy" percentage**. Every metric is reported with an explicit numerator and denominator grounded in observable runtime execution across 4 independent repositories:
+Pursuant to strict evaluation integrity, VulnTrace **does not invent a single ungrounded "accuracy" percentage**. Every metric is reported with an explicit numerator and denominator grounded in observable runtime execution across 4 evaluation cases across 3 repositories (recorded on commit `0aa3e1e` benchmark run):
 
-- **Total Independent Repositories Evaluated:** `4`
+- **Total Evaluation Cases:** `4` (across 3 repositories: `flasgger`, `cookiecutter`, `repo_cloud_config`)
 - **Reachable Paths Identified:** `2 of 4 cases` (`CASE-RW-01` Flasgger, `CASE-RW-04` Cloud Config)
 - **No-Static-Path False Positive Suppressions:** `2 of 4 cases` (`CASE-RW-02` Flasgger patched, `CASE-RW-03` Cookiecutter)
 - **Behavioral Reproductions Attempted:** `2 of 4 cases` (`CASE-RW-01`, `CASE-RW-04`)
-- **Behavioral Reproductions Succeeded:** `1 of 2 attempted cases` (`CASE-RW-04` reproduced; `CASE-RW-01` halted with `UNEXPECTED_FAILURE` due to missing external runtime dependency `jsonschema`)
+- **Behavioral Reproductions Succeeded:** `1 of 2 attempted cases` (`CASE-RW-04` reproduced; `CASE-RW-01` halted with `UNEXPECTED_FAILURE` due to runtime dependency/environment incompatibility)
 - **Patch Proposals Generated:** `1 of 4 cases` (`CASE-RW-04` via NVIDIA Nemotron 3 Ultra)
 - **Patches Accepted by AST Syntax & Diff Gates:** `1 of 1 generated patches` (`CASE-RW-04`)
 - **Patches Rejected:** `0 of 1 generated patches in real-world suite` (Adversarial rejection proven in unit suite: 1 syntax error, 1 empty diff)
@@ -166,10 +166,10 @@ SCA tools generate immense alert fatigue by warning on every library version in 
 VulnTrace analyzes all Python files using an AST Call-Graph Solver tracing from top-level repository entrypoints down to candidate vulnerable sink functions (e.g. `yaml.load`). If vulnerable functions are only found in uncalled dead code, VulnTrace classifies the alert as `UNREACHABLE_FALSE_POSITIVE`, preventing unnecessary work.
 
 ### Q3. What makes behavioral verification safe?
-All execution occurs in disposable `%TEMP%` directories with completely purged environment secrets (stripping `NEBIUS_API_KEY`, `TAVILY_API_KEY`, AWS tokens, SSH keys). The subprocess uses target-bound benign object instantiation (writing a timestamped sentinel marker) rather than dangerous shell payloads. Watchdog timers terminate orphaned child processes.
+All execution occurs in disposable `%TEMP%` directories with completely purged environment secrets (stripping `NEBIUS_API_KEY`, `TAVILY_API_KEY`, AWS tokens, SSH keys) and strict network isolation during verification (setting offline pip flags, dummy proxy endpoints, and child socket blocking). The subprocess uses target-bound benign object instantiation (writing a timestamped sentinel marker) rather than destructive shell commands. Watchdog timers terminate orphaned child process trees. While isolated on the filesystem and network, the runner executes as a local subprocess sharing the host OS kernel and loopback interface (disclosed as `LOCAL_SUBPROCESS_FALLBACK`).
 
 ### Q4. Why is the post-patch check trusted?
-VulnTrace implements a strict **Parent Trust Boundary**. The parent runner never trusts child-process stdout or self-reporting. It independently audits the physical filesystem to ensure the sentinel file was NEVER created, and mandates exit code 42 (indicating an intentional security block).
+VulnTrace implements a strict **Parent Trust Boundary**. The parent runner never trusts child-process stdout or self-reporting. It independently audits the physical filesystem to ensure the sentinel file was NEVER created, evaluates in-harness positive controls to ensure benign functionality survived, and mandates exit code 42 (indicating an intentional security block).
 
 ### Q5. How does VulnTrace prevent regressions?
 After verifying the vulnerability is blocked, the engine automatically runs the repository's native test suite (via `pytest`) inside the disposable sandbox. If any test fails, the patch is rejected and the verdict is set to `REGRESSION_FAILURE`.
@@ -178,20 +178,20 @@ After verifying the vulnerability is blocked, the engine automatically runs the 
 Nemotron 3 Ultra (hosted on Nebius Token Factory) generates surgical, AST-parsed codemods. In contextual benchmarks (such as custom YAML loaders registering application-specific tags), Nemotron reasons through the AST context to preserve application classes (`AppSafeLoader`), whereas naive find-replace breaks test suites.
 
 ### Q7. How is Tavily Search utilized?
-Tavily queries live CVE intelligence, NVD/OSV advisories, and technical PoC disclosures to discover vulnerable call signatures and inform harness synthesis.
+Tavily Search API queries live CVE intelligence, NVD/OSV advisories, and technical PoC disclosures. Verified CVE-specific findings returned by Tavily are filtered for strict relevance and then injected directly into NVIDIA Nemotron 3 Ultra's reasoning context, providing the model with grounded real-world vulnerability context and exploit mechanics when synthesizing minimal, surgical remediations.
 
 ### Q8. What is the status of ConTree Cloud?
 ConTree Cloud returns `PERMISSION_DENIED (HTTP 403)` due to token-level sandbox permissions. Rather than faking cloud execution, VulnTrace truthfully discloses `LOCAL_SUBPROCESS_FALLBACK` and documents shared host OS kernel boundaries.
 
 ### Q9. What are VulnTrace's terminal states?
 VulnTrace enforces 7 mutually exclusive terminal verdicts:
-1. `GREEN_STATE_VERIFIED`: Vulnerability reproduced, patched, blocked, and regression tests passed.
+1. `GREEN_STATE_VERIFIED`: Vulnerability reproduced, patched, blocked, positive controls intact, and regression tests passed.
 2. `RED_STATE_PERSISTS`: Remediation failed to stop the exploit.
 3. `INCONCLUSIVE`: Pre-conditions or vulnerability signal could not be observed.
 4. `PATCH_REJECTED`: Patch failed AST syntax or semantic diff gates.
 5. `REGRESSION_FAILURE`: Security fixed, but unit tests broke.
 6. `VERIFICATION_REJECTED`: Forged child evidence or policy violation.
-7. `UNEXPECTED_FAILURE`: Missing runtime dependency in environment.
+7. `UNEXPECTED_FAILURE`: Missing runtime dependency or environment incompatibility.
 
 ---
 
@@ -204,7 +204,7 @@ VulnTrace enforces 7 mutually exclusive terminal verdicts:
 | **1:00 - 1:45** | **Reproduction (RED)** | Select Cloud Config microservice. Click "Run Defensive Verification". Terminal streams pre-patch detonation. RED state Exit 0 confirmed. | *"On a genuinely vulnerable service, VulnTrace synthesizes a target-bound harness and detonates it in an isolated disposable sandbox. Sentinel created on disk: RED state confirmed."* |
 | **1:45 - 2:20** | **Nemotron Patch** | Remediation card displays NVIDIA Nemotron 3 Ultra streaming diff. Patch Delta card shows 2 lines changed across 1 file. | *"Next, NVIDIA Nemotron 3 Ultra synthesizes a surgical 2-line codemod. The AST validator parses the syntax before anything touches disk. Minimality criterion met."* |
 | **2:20 - 2:45** | **Differential Proof (GREEN)** | Differential Proof table shows Before Exit 0 vs After Exit 42. Parent Trust audit confirms sentinel absent on disk. | *"VulnTrace re-runs the identical harness against the patched code. The parent runner verifies Exit 42 and clean disk. Zero trust in child claims."* |
-| **2:45 - 3:00** | **Regressions & Export** | Pytest passes 4/4 tests. Click "Export JSON". Download complete cryptographic verification bundle. | *"Finally, pytest confirms zero regressions. With one click, developers export a signed cryptographic audit certificate. VulnTrace: from alert to proven fix."* |
+| **2:45 - 3:00** | **Regressions & Export** | Pytest passes 4/4 tests. Click "Export JSON". Download complete verification bundle. | *"Finally, pytest confirms zero regressions. With one click, developers export a verified SHA-256 hashed audit bundle and markdown report. VulnTrace: from alert to proven fix."* |
 
 ---
 
@@ -217,8 +217,12 @@ VulnTrace enforces 7 mutually exclusive terminal verdicts:
 
 ### 1. Clone & Set Up Python Environment
 ```bash
-git clone https://github.com/vulntrace/vulntrace.git
+# Clone repository with evaluation submodules
+git clone --recurse-submodules https://github.com/ROSHAN0230/vulntrace.git
 cd vulntrace
+
+# If previously cloned without --recurse-submodules:
+git submodule update --init --recursive
 
 # Create virtual environment
 python -m venv .venv
