@@ -274,6 +274,108 @@ class SubprocessSandboxRunner:
         return "python"
 
     @classmethod
+    def parse_and_validate_telemetry(
+        cls,
+        stdout_text: str,
+        stderr_text: str,
+        sentinel_on_disk: bool,
+        exit_code: int,
+        timed_out: bool = False
+    ):
+        """
+        Parses child telemetry and validates it against parent-side observable facts
+        (exit code, sentinel on disk, positive controls). Deduplicated across all backends.
+        """
+        structured_evidence: Optional[Dict[str, Any]] = None
+        assertion_result: Optional[str] = None
+        exception_type: Optional[str] = None
+
+        for line in stdout_text.splitlines():
+            line_s = line.strip()
+            if line_s.startswith("{") and line_s.endswith("}"):
+                try:
+                    payload_json = json.loads(line_s)
+                    if "assertion" in payload_json:
+                        structured_evidence = payload_json
+                        assertion_result = payload_json.get("assertion")
+                        exception_type = payload_json.get("exception_type")
+                        break
+                except Exception:
+                    pass
+
+        sink_reached = bool(structured_evidence and structured_evidence.get("sink_reached"))
+        assertion_evaluated = bool(structured_evidence and structured_evidence.get("assertion_evaluated"))
+        risky_effect = bool(structured_evidence and structured_evidence.get("risky_effect_observed"))
+        expected_sec = bool(structured_evidence and structured_evidence.get("expected_security_exception"))
+        unexpected_exc = bool(structured_evidence and structured_evidence.get("unexpected_exception"))
+
+        parent_validated = False
+        validation_notes: Optional[str] = None
+
+        if timed_out:
+            repro_state = "TIMED_OUT"
+            validation_notes = "Subprocess exceeded execution timeout watchdog."
+        elif assertion_result == "GREEN_SECURITY_BLOCK_VERIFIED":
+            # Parent independently checks for contradictions in child's GREEN claim
+            pos_passed = structured_evidence.get("positive_control_passed", True) if structured_evidence else False
+            if sentinel_on_disk:
+                repro_state = "VERIFICATION_REJECTED"
+                validation_notes = "PARENT AUDIT FAILED: Child claimed GREEN_SECURITY_BLOCK_VERIFIED, but sentinel marker was observed on disk."
+            elif risky_effect or unexpected_exc or not pos_passed:
+                repro_state = "VERIFICATION_REJECTED"
+                validation_notes = "PARENT AUDIT FAILED: Child claimed GREEN block, but reported risky effect observed, unexpected exception, or positive control failure."
+            elif not expected_sec:
+                repro_state = "VERIFICATION_REJECTED"
+                validation_notes = "PARENT AUDIT FAILED: Child claimed GREEN block, but expected_security_exception was False."
+            elif exit_code != 42:
+                repro_state = "VERIFICATION_REJECTED"
+                validation_notes = f"PARENT AUDIT FAILED: Child claimed GREEN block, but exited with code {exit_code} (expected 42)."
+            elif not sink_reached or not assertion_evaluated:
+                repro_state = "VERIFICATION_REJECTED"
+                validation_notes = "PARENT AUDIT FAILED: Vulnerable sink was not reached or assertion was not evaluated."
+            else:
+                repro_state = "GREEN_STATE_BLOCKED"
+                parent_validated = True
+                validation_notes = "Parent verified: exit code 42, zero sentinel markers, typed security exception evaluated, positive control passed."
+
+        elif assertion_result == "RED_PASSED":
+            if not sentinel_on_disk:
+                repro_state = "VERIFICATION_REJECTED"
+                validation_notes = "PARENT AUDIT FAILED: Child claimed RED_PASSED, but no sentinel marker was created on disk."
+            elif exit_code != 0:
+                repro_state = "VERIFICATION_REJECTED"
+                validation_notes = f"PARENT AUDIT FAILED: Child claimed RED_PASSED, but process exited with code {exit_code}."
+            else:
+                repro_state = "RED_STATE_REPRODUCED"
+                parent_validated = True
+                validation_notes = "Parent verified: exit code 0, physical sentinel marker created on disk."
+
+        elif exit_code == 10 or (assertion_result and "INCONCLUSIVE" in assertion_result):
+            if sentinel_on_disk:
+                repro_state = "VERIFICATION_REJECTED"
+                validation_notes = "PARENT AUDIT FAILED: Inconclusive claimed, but sentinel marker was created on disk."
+            else:
+                repro_state = "INCONCLUSIVE"
+                parent_validated = True
+                validation_notes = "Parent verified: Inconclusive state (pre-validation guard or condition un-reproduced)."
+
+        elif sentinel_on_disk and exit_code == 0:
+            repro_state = "RED_STATE_REPRODUCED"
+            parent_validated = True
+            validation_notes = "Parent verified: sentinel marker created on disk with exit code 0."
+        elif assertion_result == "POSITIVE_CONTROL_FAILED":
+            repro_state = "UNEXPECTED_FAILURE"
+            validation_notes = f"PARENT AUDIT: In-harness positive control failed; remediation broke valid application behavior ({structured_evidence.get('detail', '') if structured_evidence else ''})"
+        elif exit_code != 0:
+            repro_state = "UNEXPECTED_FAILURE"
+            validation_notes = f"Process exited abnormally (exit {exit_code}) without valid defensive assertion."
+        else:
+            repro_state = "INCONCLUSIVE"
+            validation_notes = "Process exited 0 without triggering observable exploit effect or defensive block."
+
+        return repro_state, assertion_result, exception_type, structured_evidence, parent_validated, validation_notes
+
+    @classmethod
     def execute_script(
         cls,
         disposable_dir: Path,
@@ -371,97 +473,13 @@ class SubprocessSandboxRunner:
             except Exception:
                 pass
 
-        # Parse structured behavioral assertion and verification evidence from stdout
-        structured_evidence: Optional[Dict[str, Any]] = None
-        assertion_result: Optional[str] = None
-        exception_type: Optional[str] = None
-
-        for line in stdout_text.splitlines():
-            line_s = line.strip()
-            if line_s.startswith("{") and line_s.endswith("}"):
-                try:
-                    payload_json = json.loads(line_s)
-                    if "assertion" in payload_json:
-                        structured_evidence = payload_json
-                        assertion_result = payload_json.get("assertion")
-                        exception_type = payload_json.get("exception_type")
-                        break
-                except Exception:
-                    pass
-
-        sink_reached = bool(structured_evidence and structured_evidence.get("sink_reached"))
-        assertion_evaluated = bool(structured_evidence and structured_evidence.get("assertion_evaluated"))
-        risky_effect = bool(structured_evidence and structured_evidence.get("risky_effect_observed"))
-        expected_sec = bool(structured_evidence and structured_evidence.get("expected_security_exception"))
-        unexpected_exc = bool(structured_evidence and structured_evidence.get("unexpected_exception"))
-
-        parent_validated = False
-        validation_notes: Optional[str] = None
-
-        if timed_out:
-            repro_state = "TIMED_OUT"
-            validation_notes = "Subprocess exceeded execution timeout watchdog."
-        elif assertion_result == "GREEN_SECURITY_BLOCK_VERIFIED":
-            # Parent independently checks for contradictions in child's GREEN claim
-            pos_passed = structured_evidence.get("positive_control_passed", True) if structured_evidence else False
-            if sentinel_on_disk:
-                # Contradiction: Child claims blocked, but exploit created sentinel on disk!
-                repro_state = "VERIFICATION_REJECTED"
-                validation_notes = "PARENT AUDIT FAILED: Child claimed GREEN_SECURITY_BLOCK_VERIFIED, but sentinel marker was observed on disk."
-            elif risky_effect or unexpected_exc or not pos_passed:
-                repro_state = "VERIFICATION_REJECTED"
-                validation_notes = "PARENT AUDIT FAILED: Child claimed GREEN block, but reported risky effect observed, unexpected exception, or positive control failure."
-            elif not expected_sec:
-                repro_state = "VERIFICATION_REJECTED"
-                validation_notes = "PARENT AUDIT FAILED: Child claimed GREEN block, but expected_security_exception was False."
-            elif exit_code != 42:
-                repro_state = "VERIFICATION_REJECTED"
-                validation_notes = f"PARENT AUDIT FAILED: Child claimed GREEN block, but exited with code {exit_code} (expected 42)."
-            elif not sink_reached or not assertion_evaluated:
-                repro_state = "VERIFICATION_REJECTED"
-                validation_notes = "PARENT AUDIT FAILED: Vulnerable sink was not reached or assertion was not evaluated."
-            else:
-                # Genuine verified green block
-                repro_state = "GREEN_STATE_BLOCKED"
-                parent_validated = True
-                validation_notes = "Parent verified: exit code 42, zero sentinel markers, typed security exception evaluated, positive control passed."
-
-        elif assertion_result == "RED_PASSED":
-            if not sentinel_on_disk:
-                # Contradiction: Child claims RED_PASSED, but no sentinel on disk!
-                repro_state = "VERIFICATION_REJECTED"
-                validation_notes = "PARENT AUDIT FAILED: Child claimed RED_PASSED, but no sentinel marker was created on disk."
-            elif exit_code != 0:
-                repro_state = "VERIFICATION_REJECTED"
-                validation_notes = f"PARENT AUDIT FAILED: Child claimed RED_PASSED, but process exited with code {exit_code}."
-            else:
-                repro_state = "RED_STATE_REPRODUCED"
-                parent_validated = True
-                validation_notes = "Parent verified: exit code 0, physical sentinel marker created on disk."
-
-        elif exit_code == 10 or (assertion_result and "INCONCLUSIVE" in assertion_result):
-            if sentinel_on_disk:
-                repro_state = "VERIFICATION_REJECTED"
-                validation_notes = "PARENT AUDIT FAILED: Inconclusive claimed, but sentinel marker was created on disk."
-            else:
-                repro_state = "INCONCLUSIVE"
-                parent_validated = True
-                validation_notes = "Parent verified: Inconclusive state (pre-validation guard or condition un-reproduced)."
-
-        elif sentinel_on_disk and exit_code == 0:
-            repro_state = "RED_STATE_REPRODUCED"
-            parent_validated = True
-            validation_notes = "Parent verified: sentinel marker created on disk with exit code 0."
-        elif assertion_result == "POSITIVE_CONTROL_FAILED":
-            repro_state = "UNEXPECTED_FAILURE"
-            validation_notes = f"PARENT AUDIT: In-harness positive control failed; remediation broke valid application behavior ({structured_evidence.get('detail', '') if structured_evidence else ''})"
-        elif exit_code != 0:
-            # Unhandled crash, syntax error, exit 1, or spoofed exit 42 without valid structured assertion
-            repro_state = "UNEXPECTED_FAILURE"
-            validation_notes = f"Process exited abnormally (exit {exit_code}) without valid defensive assertion."
-        else:
-            repro_state = "INCONCLUSIVE"
-            validation_notes = "Process exited 0 without triggering observable exploit effect or defensive block."
+        repro_state, assertion_result, exception_type, structured_evidence, parent_validated, validation_notes = cls.parse_and_validate_telemetry(
+            stdout_text=stdout_text,
+            stderr_text=stderr_text,
+            sentinel_on_disk=sentinel_on_disk,
+            exit_code=exit_code,
+            timed_out=timed_out
+        )
 
         return SandboxExecutionResult(
             exit_code=exit_code,

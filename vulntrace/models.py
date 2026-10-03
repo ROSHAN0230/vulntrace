@@ -224,6 +224,7 @@ class VerificationPipelineRequest(BaseModel):
     use_nemotron: bool = True
     query_tavily: bool = True
     advisory_summary: Optional[str] = None
+    execution_backend: Optional[str] = None
 
 # --- Formal Evidence Schema (Phase 4) ---
 class RepositoryEvidence(BaseModel):
@@ -284,12 +285,15 @@ class RegressionEvidence(BaseModel):
     error: Optional[str] = None
 
 class ExecutionEvidence(BaseModel):
-    sandbox_engine: str   # "LOCAL_SUBPROCESS_FALLBACK"
+    sandbox_engine: str   # "LOCAL_SUBPROCESS_FALLBACK", "OCI_CONTAINER_ISOLATED"
     cloud_status: str     # "PERMISSION_DENIED (HTTP 403)"
     disposable_dir: Optional[str] = None
     purged_env_secrets_count: int = 0
     timeout_seconds: float = 10.0
     parent_audit_passed: bool = False
+    isolation_tier: Optional[str] = "LOCAL_SUBPROCESS_FALLBACK"
+    capabilities: Optional[Dict[str, Any]] = None
+    attestation: Optional[Dict[str, Any]] = None
     isolation_limits: Dict[str, str] = Field(default_factory=lambda: {
         "isolated": "disposable directory copy, purged credentials/secrets, timeout watchdog, process-tree termination",
         "unisolated": "shared host OS kernel, host localhost loopback"
@@ -321,9 +325,11 @@ class VerificationPipelineResponse(BaseModel):
     final_behavioral_verdict: str              # "GREEN_STATE_VERIFIED", "RED_STATE_PERSISTS", "REGRESSION_FAILURE", "INCONCLUSIVE", "PATCH_REJECTED", "UNREACHABLE_FALSE_POSITIVE", "UNEXPECTED_FAILURE", "VERIFICATION_REJECTED"
     structured_evidence: Optional[Dict[str, Any]] = None
     verdict_record: Optional[FinalVerdictRecord] = None
-    sandbox_engine: str                        # "LOCAL_SUBPROCESS_FALLBACK"
+    sandbox_engine: str                        # "LOCAL_SUBPROCESS_FALLBACK", "OCI_CONTAINER_ISOLATED"
     cloud_status: str                          # "PERMISSION_DENIED (HTTP 403)"
     total_pipeline_ms: float
+    isolation_tier: Optional[str] = "LOCAL_SUBPROCESS_FALLBACK"
+    isolation_attestation: Optional[Dict[str, Any]] = None
 
 # --- Streaming Pipeline Event ---
 class PipelineEvent(BaseModel):

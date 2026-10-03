@@ -193,6 +193,8 @@ export interface VerificationPipelineResponse {
   sandbox_engine: string;
   cloud_status: string;
   total_pipeline_ms: number;
+  isolation_tier?: string;
+  isolation_attestation?: Record<string, any>;
 }
 
 export interface BenchmarkScenarioInfo {

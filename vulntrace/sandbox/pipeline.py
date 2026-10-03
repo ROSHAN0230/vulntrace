@@ -34,6 +34,9 @@ from vulntrace.models import (
 )
 from vulntrace.sandbox.runner import SubprocessSandboxRunner
 from vulntrace.sandbox.target_env import TargetEnvironmentManager
+from vulntrace.core.backend import ExecutionBackend, IsolationTier
+from vulntrace.core.local_backend import LocalSubprocessBackend
+from vulntrace.core.factory import BackendFactory
 from vulntrace.analyzer.ast_visitor import AstReachabilityAnalyzer
 from vulntrace.agent.harness_synthesizer import HarnessSynthesizer
 from vulntrace.agent.patcher import RemediationPatcher
@@ -48,10 +51,19 @@ class VerificationPipeline:
     async def run_pipeline(
         cls,
         req: VerificationPipelineRequest,
-        on_event: Optional[Callable[[PipelineEvent], None]] = None
+        on_event: Optional[Callable[[PipelineEvent], None]] = None,
+        backend: Optional[ExecutionBackend] = None
     ) -> VerificationPipelineResponse:
         t0 = time.perf_counter()
         source_repo = Path(req.repo_path).resolve()
+        if backend is None:
+            tier_override = None
+            if req.execution_backend:
+                if "CONTAINER" in req.execution_backend.upper() or "OCI" in req.execution_backend.upper():
+                    tier_override = IsolationTier.OCI_CONTAINER_ISOLATED
+                elif "LOCAL" in req.execution_backend.upper() or "SUBPROCESS" in req.execution_backend.upper():
+                    tier_override = IsolationTier.LOCAL_SUBPROCESS_FALLBACK
+            backend = BackendFactory.resolve_best_available_backend(force_tier=tier_override)
 
         def emit(event_type: str, stage: str, message: str, data: Optional[Dict[str, Any]] = None):
             if on_event:
@@ -63,21 +75,48 @@ class VerificationPipeline:
                     timestamp=time.time()
                 ))
 
-        emit("STAGE_START", "SANDBOX", f"Initializing disposable sandbox workspace for: {source_repo}")
-        disposable_dir = SubprocessSandboxRunner.prepare_disposable_workspace(source_repo)
-        emit("LOG", "SANDBOX", f"Disposable sandbox mounted at: {disposable_dir}")
+        emit("STAGE_START", "SANDBOX", f"Initializing disposable workspace on backend ({backend.capabilities.tier.value})...")
+        workspace_id = await backend.initialize_workspace(source_repo)
+        disposable_dir = Path(workspace_id)
+        emit("LOG", "SANDBOX", f"Disposable workspace mounted at: {workspace_id}")
 
-        # Controlled Target-Environment Setup Path (P0.2)
+        # Controlled Target-Environment Setup Path (P0.2/P0.6)
         emit("STAGE_START", "SETUP", f"Detecting target dependencies for {source_repo.name}...")
-        target_env = TargetEnvironmentManager.provision_target_environment(
-            disposable_dir=disposable_dir,
+        has_manifest, detected_deps = TargetEnvironmentManager.detect_dependencies(disposable_dir)
+        prov_result = await backend.provision_dependencies(
+            workspace_id=workspace_id,
+            manifest_dependencies=detected_deps,
             on_log=lambda msg: emit("LOG", "SETUP", msg)
         )
-        target_py = target_env.python_executable
-        if target_env.provisioned:
-            emit("STAGE_COMPLETE", "SETUP", f"Target environment provisioned with {len(target_env.detected_dependencies)} dependencies ({target_env.setup_latency_ms}ms). Network isolation active.")
+        if prov_result.exit_code == 0:
+            emit("STAGE_COMPLETE", "SETUP", f"Target environment provisioned on backend ({backend.capabilities.tier.value}) in {prov_result.latency_ms}ms. Network isolation active.")
         else:
-            emit("LOG", "SETUP", f"Target environment: {target_env.notes}")
+            emit("LOG", "SETUP", f"Target environment: {prov_result.validation_notes or 'standard environment'}")
+
+        async def _run_backend_script(script_name: str, sentinel_name: str, stage_label: str) -> SandboxExecutionResult:
+            cmd_res = await backend.execute_script(
+                workspace_id=workspace_id,
+                script_name=script_name,
+                timeout=10.0,
+                sentinel_filename=sentinel_name,
+                on_log=lambda msg: emit("LOG", stage_label, msg)
+            )
+            return SandboxExecutionResult(
+                exit_code=cmd_res.exit_code,
+                stdout=cmd_res.stdout,
+                stderr=cmd_res.stderr,
+                latency_ms=cmd_res.latency_ms,
+                sentinel_created=cmd_res.sentinel_created,
+                reproduction_state=cmd_res.reproduction_state,
+                assertion_result=cmd_res.assertion_result,
+                exception_type=cmd_res.exception_type,
+                structured_evidence=cmd_res.structured_evidence,
+                parent_validated=cmd_res.parent_validated,
+                validation_notes=cmd_res.validation_notes,
+                sandbox_engine=backend.capabilities.tier.value,
+                disposable_dir=str(disposable_dir),
+                error=cmd_res.error
+            )
 
         try:
             vuln_sym = req.vulnerable_symbol or "yaml.load"
@@ -128,10 +167,14 @@ class VerificationPipeline:
                 entrypoints=req.entrypoints,
                 verdict=reachability_verdict
             )
+            attestation = backend.generate_attestation(workspace_id)
             exec_ev = ExecutionEvidence(
-                sandbox_engine=SubprocessSandboxRunner.ENGINE_LABEL,
+                sandbox_engine=backend.capabilities.tier.value,
                 cloud_status="PERMISSION_DENIED (HTTP 403)",
-                disposable_dir=str(disposable_dir)
+                disposable_dir=str(disposable_dir),
+                isolation_tier=backend.capabilities.tier.value,
+                capabilities=backend.capabilities.model_dump(),
+                attestation=attestation.model_dump()
             )
 
             # Check if target is unreachable dead code (False positive suppression)
@@ -140,7 +183,7 @@ class VerificationPipeline:
                 emit("LOG", "PIPELINE", "Halting pipeline early: no reachable vulnerable call path detected. Suppressing false alarm.")
 
                 emit("STAGE_START", "REGRESSION", "Running baseline regression tests...")
-                regression_res = SubprocessSandboxRunner.run_pytest(disposable_dir, python_executable=target_py)
+                regression_res = await backend.run_regression_suite(workspace_id)
                 emit("STAGE_COMPLETE", "REGRESSION", f"Baseline regression suite completed: {regression_res.get('test_count', 0)} tests passed.")
 
                 dt_total = (time.perf_counter() - t0) * 1000.0
@@ -163,7 +206,7 @@ class VerificationPipeline:
                     reproduction_state="UNREACHABLE_FALSE_POSITIVE",
                     parent_validated=True,
                     validation_notes="Static call graph confirmed 0 entrypoint call paths.",
-                    sandbox_engine=SubprocessSandboxRunner.ENGINE_LABEL,
+                    sandbox_engine=backend.capabilities.tier.value,
                     disposable_dir=str(disposable_dir)
                 )
                 empty_rem = RemediationResponse(
@@ -221,9 +264,11 @@ class VerificationPipeline:
                     final_behavioral_verdict=verdict_rec.terminal_state,
                     structured_evidence={"reachability": "UNREACHABLE_FALSE_POSITIVE", "dead_code_count": ast_res.unreachable_dead_code_count},
                     verdict_record=verdict_rec,
-                    sandbox_engine=SubprocessSandboxRunner.ENGINE_LABEL,
+                    sandbox_engine=backend.capabilities.tier.value,
                     cloud_status="PERMISSION_DENIED (HTTP 403)",
-                    total_pipeline_ms=round(dt_total, 2)
+                    total_pipeline_ms=round(dt_total, 2),
+                    isolation_tier=backend.capabilities.tier.value,
+                    isolation_attestation=attestation.model_dump()
                 )
 
             emit("STATE_TRANSITION", "AST", f"REACHABLE VULNERABLE CALL PATH IDENTIFIED: Call graph path discovered to {resolved_target_file}:{resolved_target_func}()")
@@ -276,14 +321,8 @@ class VerificationPipeline:
             emit("STAGE_COMPLETE", "HARNESS", f"Harness generated in {harness_res.latency_ms}ms targeting {resolved_target_file}:{resolved_target_func}()")
 
             # Stage 2: Pre-Patch Sandbox Execution (Expect RED STATE)
-            emit("STAGE_START", "REPRODUCTION", "Executing pre-patch verification harness in isolated sandbox...")
-            pre_res = SubprocessSandboxRunner.execute_script(
-                disposable_dir=disposable_dir,
-                script_name=harness_script_name,
-                sentinel_filename=harness_res.sentinel_filename,
-                on_log=lambda msg: emit("LOG", "REPRODUCTION", msg),
-                python_executable=target_py
-            )
+            emit("STAGE_START", "REPRODUCTION", f"Executing pre-patch verification harness in isolated backend ({backend.capabilities.tier.value})...")
+            pre_res = await _run_backend_script(harness_script_name, harness_res.sentinel_filename, "REPRODUCTION")
 
             # Check if pre-patch state could not reproduce (INCONCLUSIVE / GUARD BLOCKED / REJECTED)
             if pre_res.reproduction_state != "RED_STATE_REPRODUCED":
@@ -291,7 +330,7 @@ class VerificationPipeline:
                 emit("LOG", "PATCH", "Halting automated patch synthesis: VulnTrace requires confirmed RED state before attempting remediation.")
                 
                 emit("STAGE_START", "REGRESSION", "Running baseline regression tests...")
-                regression_res = SubprocessSandboxRunner.run_pytest(disposable_dir, python_executable=target_py)
+                regression_res = await backend.run_regression_suite(workspace_id)
                 emit("STAGE_COMPLETE", "REGRESSION", f"Baseline regression suite completed: {regression_res.get('test_count', 0)} tests passed.")
 
                 empty_post = SandboxExecutionResult(
@@ -303,7 +342,7 @@ class VerificationPipeline:
                     reproduction_state=pre_res.reproduction_state,
                     parent_validated=pre_res.parent_validated,
                     validation_notes=pre_res.validation_notes,
-                    sandbox_engine=SubprocessSandboxRunner.ENGINE_LABEL,
+                    sandbox_engine=backend.capabilities.tier.value,
                     disposable_dir=str(disposable_dir)
                 )
                 empty_rem = RemediationResponse(
@@ -366,9 +405,11 @@ class VerificationPipeline:
                     final_behavioral_verdict=verdict_rec.terminal_state,
                     structured_evidence=pre_res.structured_evidence,
                     verdict_record=verdict_rec,
-                    sandbox_engine=SubprocessSandboxRunner.ENGINE_LABEL,
+                    sandbox_engine=backend.capabilities.tier.value,
                     cloud_status="PERMISSION_DENIED (HTTP 403)",
-                    total_pipeline_ms=round(dt_total, 2)
+                    total_pipeline_ms=round(dt_total, 2),
+                    isolation_tier=backend.capabilities.tier.value,
+                    isolation_attestation=attestation.model_dump()
                 )
 
             emit("STATE_TRANSITION", "REPRODUCTION", f"RED STATE REPRODUCED: Sentinel marker confirmed (exit {pre_res.exit_code}) in {pre_res.latency_ms}ms")
@@ -469,14 +510,8 @@ class VerificationPipeline:
             emit("STAGE_COMPLETE", "PATCH", f"Remediation generated via {remediation_res.engine} ({remediation_res.latency_ms}ms)")
 
             # Stage 4: Post-Patch Sandbox Execution (Expect GREEN STATE)
-            emit("STAGE_START", "VERIFICATION", "Executing post-patch re-test in sandbox (expecting safe-block)...")
-            post_res = SubprocessSandboxRunner.execute_script(
-                disposable_dir=disposable_dir,
-                script_name=harness_script_name,
-                sentinel_filename=harness_res.sentinel_filename,
-                on_log=lambda msg: emit("LOG", "VERIFICATION", msg),
-                python_executable=target_py
-            )
+            emit("STAGE_START", "VERIFICATION", f"Executing post-patch re-test in isolated backend ({backend.capabilities.tier.value}) (expecting safe-block)...")
+            post_res = await _run_backend_script(harness_script_name, harness_res.sentinel_filename, "VERIFICATION")
 
             if post_res.reproduction_state == "GREEN_STATE_BLOCKED":
                 emit("STATE_TRANSITION", "VERIFICATION", f"GREEN STATE VERIFIED: Risky instantiation blocked (exit {post_res.exit_code}, {post_res.assertion_result}) in {post_res.latency_ms}ms")
@@ -485,7 +520,7 @@ class VerificationPipeline:
 
             # Stage 5: Regression Testing
             emit("STAGE_START", "REGRESSION", "Executing regression test suite (pytest)...")
-            regression_res = SubprocessSandboxRunner.run_pytest(disposable_dir, python_executable=target_py)
+            regression_res = await backend.run_regression_suite(workspace_id)
             if regression_res.get("passed"):
                 emit("STAGE_COMPLETE", "REGRESSION", f"Regression suite PASSED: {regression_res.get('test_count', 0)} tests passed in {regression_res.get('latency_ms')}ms")
             else:
@@ -588,12 +623,14 @@ class VerificationPipeline:
                 final_behavioral_verdict=final_verdict,
                 structured_evidence=pipeline_evidence,
                 verdict_record=verdict_record,
-                sandbox_engine="LOCAL_SUBPROCESS_FALLBACK",
+                sandbox_engine=backend.capabilities.tier.value,
                 cloud_status="PERMISSION_DENIED (HTTP 403)",
-                total_pipeline_ms=round(dt_total, 2)
+                total_pipeline_ms=round(dt_total, 2),
+                isolation_tier=backend.capabilities.tier.value,
+                isolation_attestation=attestation.model_dump()
             )
 
         finally:
-            # Deterministic cleanup of temporary disposable sandbox
-            SubprocessSandboxRunner.cleanup_workspace(disposable_dir)
-            emit("STAGE_COMPLETE", "SANDBOX", "Disposable sandbox workspace cleanly unmounted and destroyed.")
+            # Deterministic cleanup of isolated workspace
+            await backend.cleanup_workspace(workspace_id)
+            emit("STAGE_COMPLETE", "SANDBOX", "Disposable workspace cleanly destroyed on backend.")

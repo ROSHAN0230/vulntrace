@@ -26,5 +26,7 @@ async def test_end_to_end_verification_pipeline():
     assert res.regression_tests.get("passed") is True
     assert res.regression_tests.get("test_count") == 2
     assert res.final_behavioral_verdict == "GREEN_STATE_VERIFIED"
-    assert res.sandbox_engine == "LOCAL_SUBPROCESS_FALLBACK"
+    assert res.sandbox_engine in ["LOCAL_SUBPROCESS_FALLBACK", "OCI_CONTAINER_ISOLATED"]
+    assert res.isolation_tier in ["LOCAL_SUBPROCESS_FALLBACK", "OCI_CONTAINER_ISOLATED"]
+    assert res.isolation_attestation is not None
     assert len(events) >= 5

@@ -200,8 +200,8 @@ export const VerificationWorkbench: React.FC<VerificationWorkbenchProps> = ({
             </div>
           )}
 
-          <div className="text-[10px] font-mono px-2 py-1 rounded bg-surface-inset border border-amber-600/40 text-amber-300">
-            SANDBOX: LOCAL FALLBACK (ConTree 403)
+          <div className="text-[10px] font-mono px-2 py-1 rounded bg-surface-inset border border-cyan-600/40 text-cyan-300">
+            SUBSTRATE: {data?.isolation_tier || (data ? data.sandbox_engine : 'AUTO (OCI ROOTLESS / JOB OBJECT)')}
           </div>
           <button
             type="button"
@@ -275,11 +275,11 @@ export const VerificationWorkbench: React.FC<VerificationWorkbenchProps> = ({
               </div>
             </div>
             <div className="flex flex-col md:items-end gap-1">
-              <span className="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded bg-surface-inset border border-border-subtle">
-                SANDBOX: {data.sandbox_engine}
+              <span className={`text-[10px] uppercase tracking-widest px-2 py-0.5 rounded bg-surface-inset border ${data.isolation_tier === 'OCI_CONTAINER_ISOLATED' ? 'border-emerald-600/40 text-emerald-300' : 'border-border-subtle text-amber-300'}`}>
+                TIER: {data.isolation_tier || data.sandbox_engine}
               </span>
               <span className="text-[9px] text-slate-400">
-                CLOUD: {data.cloud_status}
+                NETWORK: {data.isolation_attestation?.network_mode || 'DENIED'}
               </span>
             </div>
           </div>

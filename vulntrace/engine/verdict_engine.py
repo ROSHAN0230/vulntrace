@@ -107,6 +107,7 @@ class VerdictEngine:
             "regression_passed": regression_ev.passed,
             "regression_test_count": regression_ev.test_count,
             "sandbox_engine": exec_ev.sandbox_engine,
+            "isolation_tier": getattr(exec_ev, "isolation_tier", exec_ev.sandbox_engine),
             "cloud_status": exec_ev.cloud_status
         }
 
