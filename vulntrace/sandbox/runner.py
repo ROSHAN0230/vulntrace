@@ -15,22 +15,156 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List, Callable
 from vulntrace.models import SandboxExecutionResult
 
+import ctypes
+from ctypes import wintypes
+
 # Blacklisted environment variable substrings to ensure zero credential leakage
-SECRET_PATTERNS = ["KEY", "TOKEN", "SECRET", "AUTH", "PASSWORD", "CREDENTIAL", "NEBIUS", "TAVILY"]
+SECRET_PATTERNS = [
+    "KEY", "TOKEN", "SECRET", "AUTH", "PASSWORD", "CREDENTIAL", "NEBIUS", "TAVILY",
+    "OPENAI", "ANTHROPIC", "GEMINI", "GITHUB", "GITLAB", "BITBUCKET", "AWS", "AZURE",
+    "GCP", "GOOGLE", "SSH", "PROXY_PASS", "PROXY_USER", "PROXY_AUTH", "NPM", "PYPI",
+    "DOCKER", "KUBE", "CERT", "PRIVATE", "SIGN", "CI_", "SESSION", "COOKIE", "BEARER"
+]
+
+EXPLICIT_BLACKLIST_VARS = {
+    "SSH_AUTH_SOCK", "SSH_AGENT_PID", "GIT_ASKPASS", "SSH_ASKPASS",
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+    "AZURE_CLIENT_SECRET", "GOOGLE_APPLICATION_CREDENTIALS",
+    "TWINE_USERNAME", "TWINE_PASSWORD", "PIP_CONFIG_FILE",
+    "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "NETRC", "CURL_CA_BUNDLE"
+}
+
+
+class Win32JobObject:
+    """
+    Win32 Job Object wrapper for strict process containment on Windows (P0.5.2).
+    - Enables JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (all child/grandchild processes die when handle is closed).
+    - Prevents silent breakaway: descendants remain trapped inside the Job Object.
+    - Sets memory limits (512 MB process, 1024 MB job).
+    - Guarantees complete process-tree termination on timeout or unexpected exit.
+
+    NOTE ON BOUNDARY LIMITATION:
+    Job Objects solve process-tree and resource containment on Windows.
+    They do NOT by themselves solve filesystem DACLs or network isolation.
+    """
+    def __init__(self, memory_limit_mb: int = 512, job_memory_limit_mb: int = 1024):
+        self.handle = None
+        self.k32 = None
+        if sys.platform != "win32":
+            return
+
+        try:
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            self.k32 = k32
+            self.handle = k32.CreateJobObjectW(None, None)
+            if not self.handle:
+                return
+
+            class IO_COUNTERS(ctypes.Structure):
+                _fields_ = [
+                    ("ReadOperationCount", ctypes.c_uint64),
+                    ("WriteOperationCount", ctypes.c_uint64),
+                    ("OtherOperationCount", ctypes.c_uint64),
+                    ("ReadTransferCount", ctypes.c_uint64),
+                    ("WriteTransferCount", ctypes.c_uint64),
+                    ("OtherTransferCount", ctypes.c_uint64),
+                ]
+
+            class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+                _fields_ = [
+                    ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER),
+                    ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
+                    ("LimitFlags", wintypes.DWORD),
+                    ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t),
+                    ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t),
+                    ("PriorityClass", wintypes.DWORD),
+                    ("SchedulingClass", wintypes.DWORD),
+                ]
+
+            class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+                _fields_ = [
+                    ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                    ("IoInfo", IO_COUNTERS),
+                    ("ProcessMemoryLimit", ctypes.c_size_t),
+                    ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                    ("PeakJobMemoryUsed", ctypes.c_size_t),
+                ]
+
+            info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+            JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION = 0x0400
+            JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x0100
+            JOB_OBJECT_LIMIT_JOB_MEMORY = 0x0200
+
+            flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
+            if memory_limit_mb > 0:
+                flags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY
+                info.ProcessMemoryLimit = memory_limit_mb * 1024 * 1024
+            if job_memory_limit_mb > 0:
+                flags |= JOB_OBJECT_LIMIT_JOB_MEMORY
+                info.JobMemoryLimit = job_memory_limit_mb * 1024 * 1024
+
+            info.BasicLimitInformation.LimitFlags = flags
+            k32.SetInformationJobObject(
+                self.handle,
+                9,  # JobObjectExtendedLimitInformation
+                ctypes.byref(info),
+                ctypes.sizeof(info)
+            )
+        except Exception:
+            self.handle = None
+
+    def assign_process(self, proc: subprocess.Popen) -> bool:
+        if not self.handle or not proc or not hasattr(proc, "_handle"):
+            return False
+        try:
+            res = self.k32.AssignProcessToJobObject(self.handle, int(proc._handle))
+            return bool(res)
+        except Exception:
+            return False
+
+    def terminate(self, exit_code: int = 99):
+        if self.handle:
+            try:
+                self.k32.TerminateJobObject(self.handle, exit_code)
+            except Exception:
+                pass
+
+    def close(self):
+        if self.handle:
+            try:
+                self.k32.CloseHandle(self.handle)
+            except Exception:
+                pass
+            self.handle = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
 
 class SubprocessSandboxRunner:
     """
-    Controlled Local Subprocess Runner with Sanitized Workspace & Process Tree Watchdog.
+    Controlled Local Subprocess Runner with Win32 Job Object Containment & Sanitized Workspace.
     Explicitly labeled: LOCAL_SUBPROCESS_FALLBACK (operating while ConTree cloud sandboxes return 403).
     """
     ENGINE_LABEL = "LOCAL_SUBPROCESS_FALLBACK"
 
     ISOLATION_SPECIFICATION = {
         "sandbox_tier": "LOCAL_SUBPROCESS_FALLBACK",
-        "filesystem": "Isolated temporary directory copy in %TEMP%; host repository untouched",
-        "secrets": "Purged environment variables (no API keys, tokens, or credentials passed)",
-        "watchdog": "Strict subprocess timeout and taskkill process-tree cleanup",
-        "boundary_limitations": "Shares host OS kernel and localhost loopback; not a containerized hypervisor or microVM."
+        "process_containment": "Windows Job Object (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, 512MB RAM cap)",
+        "filesystem": "Isolated temporary directory copy in %TEMP%; profile env vars redirected",
+        "secrets": "Purged environment variables (credentials, API keys, SSH, and cloud tokens stripped)",
+        "watchdog": "Strict subprocess timeout, Job Object termination, and taskkill fallback",
+        "boundary_limitations": (
+            "Shares host OS kernel and ambient user token. Job Objects enforce process tree termination "
+            "and RAM quotas, but do not provide hypervisor microVM or OS-level network namespace isolation."
+        )
     }
 
     @classmethod
@@ -38,6 +172,7 @@ class SubprocessSandboxRunner:
         """
         Clones the target repository into a disposable temporary directory.
         Never modifies the source codebase directly.
+        Defends against external symlinks and directory junctions.
         """
         source_repo = Path(source_repo).resolve()
         if not source_repo.exists() or not source_repo.is_dir():
@@ -48,19 +183,37 @@ class SubprocessSandboxRunner:
         def ignore_patterns(path: str, names: List[str]) -> List[str]:
             ignored = []
             for name in names:
+                full_p = Path(path) / name
+                # Reject symlinks/junctions pointing outside source_repo
+                if full_p.is_symlink():
+                    try:
+                        resolved = full_p.resolve()
+                        if not str(resolved).startswith(str(source_repo)):
+                            ignored.append(name)
+                            continue
+                    except Exception:
+                        ignored.append(name)
+                        continue
                 if name in [".git", ".venv", "venv", "__pycache__", "node_modules", "dist", "build", ".pytest_cache"]:
                     ignored.append(name)
             return ignored
 
-        shutil.copytree(source_repo, disposable_dir, dirs_exist_ok=True, ignore=ignore_patterns)
+        shutil.copytree(source_repo, disposable_dir, dirs_exist_ok=True, ignore=ignore_patterns, symlinks=False)
         return disposable_dir
 
     @classmethod
     def sanitize_environment(cls, disposable_dir: Path) -> Dict[str, str]:
         """
         Constructs a sanitized environment dict, purging all host credentials and secrets.
+        Redirects profile and cache directories into the disposable workspace (P0.5.6).
         Only passes essential OS and Python paths.
         """
+        disposable_dir = Path(disposable_dir).resolve()
+        appdata_dir = disposable_dir / ".appdata"
+        appdata_dir.mkdir(parents=True, exist_ok=True)
+        localappdata_dir = disposable_dir / ".localappdata"
+        localappdata_dir.mkdir(parents=True, exist_ok=True)
+
         safe_env = {
             "PYTHONPATH": str(disposable_dir),
             "SYSTEMROOT": os.environ.get("SYSTEMROOT", "C:\\Windows"),
@@ -68,11 +221,15 @@ class SubprocessSandboxRunner:
             "PATH": os.environ.get("PATH", ""),
             "TEMP": str(disposable_dir),
             "TMP": str(disposable_dir),
+            "USERPROFILE": str(disposable_dir),
+            "HOME": str(disposable_dir),
+            "APPDATA": str(appdata_dir),
+            "LOCALAPPDATA": str(localappdata_dir),
             "PYTHONUNBUFFERED": "1",
             "PYTHONDONTWRITEBYTECODE": "1"
         }
 
-        # Strict network isolation during behavioral verification
+        # Strict network isolation hints during behavioral verification
         safe_env["PIP_NO_INDEX"] = "1"
         safe_env["PIP_OFFLINE"] = "1"
         safe_env["HTTP_PROXY"] = "http://0.0.0.0:0"
@@ -82,7 +239,8 @@ class SubprocessSandboxRunner:
 
         # Double-check: ensure no secret variable slipped into safe_env
         for k in list(safe_env.keys()):
-            if any(pat in k.upper() for pat in SECRET_PATTERNS):
+            k_upper = k.upper()
+            if k in EXPLICIT_BLACKLIST_VARS or any(pat in k_upper for pat in SECRET_PATTERNS):
                 del safe_env[k]
 
         return safe_env
@@ -167,6 +325,7 @@ class SubprocessSandboxRunner:
         stderr_text = ""
         exit_code = -1
         timed_out = False
+        job = Win32JobObject()
 
         try:
             proc = subprocess.Popen(
@@ -177,21 +336,27 @@ class SubprocessSandboxRunner:
                 text=True,
                 env=env
             )
+            # P0.5.2: Bind target process tree to Win32 Job Object
+            job.assign_process(proc)
 
             stdout_text, stderr_text = proc.communicate(timeout=timeout)
             exit_code = proc.returncode
 
         except subprocess.TimeoutExpired:
             timed_out = True
+            job.terminate(99)
             if proc:
                 cls._kill_process_tree(proc)
                 stdout_text, stderr_text = proc.communicate()
             exit_code = -99
         except Exception as e:
+            job.terminate(99)
             if proc:
                 cls._kill_process_tree(proc)
             stderr_text = f"Execution exception: {type(e).__name__}: {str(e)}"
             exit_code = -1
+        finally:
+            job.close()
 
         dt = (time.perf_counter() - t0) * 1000.0
 
@@ -337,6 +502,7 @@ class SubprocessSandboxRunner:
         cmd.extend(["-v", "--no-header"])
 
         proc = None
+        job = Win32JobObject()
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -346,9 +512,11 @@ class SubprocessSandboxRunner:
                 text=True,
                 env=env
             )
+            job.assign_process(proc)
             stdout_text, stderr_text = proc.communicate(timeout=timeout)
             exit_code = proc.returncode
         except subprocess.TimeoutExpired:
+            job.terminate(99)
             if proc:
                 cls._kill_process_tree(proc)
             dt = (time.perf_counter() - t0) * 1000.0
@@ -361,6 +529,7 @@ class SubprocessSandboxRunner:
                 "error": "TIMEOUT"
             }
         except Exception as e:
+            job.terminate(99)
             if proc:
                 cls._kill_process_tree(proc)
             dt = (time.perf_counter() - t0) * 1000.0

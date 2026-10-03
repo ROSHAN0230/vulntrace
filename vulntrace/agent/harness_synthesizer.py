@@ -51,7 +51,29 @@ class HarnessSynthesizer:
 except Exception:
     class _EmptySecBlock(Exception): pass
     sec_block_types = (_EmptySecBlock,)"""
-            benign_payload_expr = '"""\nservice: auth\nport: 9000\nnested:\n  workers: 4\n  debug: false\n"""'
+            benign_suite_code = """[
+    {
+        "id": "flat_service_mapping",
+        "input": \"\"\"service: auth\\nport: 9000\"\"\",
+        "req_type": dict,
+        "req_keys": ["service", "port"],
+        "check": lambda r: r.get("service") == "auth" and r.get("port") == 9000
+    },
+    {
+        "id": "nested_hierarchy_mapping",
+        "input": \"\"\"service: core-api\\nnested:\\n  workers: 4\\n  enabled: true\"\"\",
+        "req_type": dict,
+        "req_keys": ["service", "nested"],
+        "check": lambda r: isinstance(r.get("nested"), dict) and r["nested"].get("workers") == 4 and r["nested"].get("enabled") is True
+    },
+    {
+        "id": "multi_type_mapping",
+        "input": \"\"\"database:\\n  host: localhost\\n  port: 5432\\n  endpoints:\\n    - primary\\n    - replica\"\"\",
+        "req_type": dict,
+        "req_keys": ["database"],
+        "check": lambda r: isinstance(r.get("database"), dict) and r["database"].get("port") == 5432 and isinstance(r["database"].get("endpoints"), list) and len(r["database"]["endpoints"]) == 2
+    }
+]"""
         elif is_pickle_deserialization:
             payload_expr = f'__import__("pickle").dumps(type("Exploit", (), {{"__reduce__": lambda self: (open, ("{sentinel_name}", "w"))}})())'
             import_block = """try:
@@ -61,16 +83,61 @@ except Exception:
 except Exception:
     class _EmptySecBlock(Exception): pass
     sec_block_types = (_EmptySecBlock,)"""
-            benign_payload_expr = '__import__("pickle").dumps({"service": "auth", "port": 9000, "nested": {"workers": 4}})'
+            benign_suite_code = """[
+    {
+        "id": "pickle_flat_dict",
+        "input": __import__("pickle").dumps({"service": "auth", "port": 9000}),
+        "req_type": dict,
+        "req_keys": ["service", "port"],
+        "check": lambda r: r.get("service") == "auth" and r.get("port") == 9000
+    },
+    {
+        "id": "pickle_nested_structure",
+        "input": __import__("pickle").dumps({"service": "core", "nested": {"workers": 4}}),
+        "req_type": dict,
+        "req_keys": ["service", "nested"],
+        "check": lambda r: isinstance(r.get("nested"), dict) and r["nested"].get("workers") == 4
+    }
+]"""
         elif is_command_exec or is_code_eval:
             payload_expr = f'"__import__(\'pathlib\').Path(\'{sentinel_name}\').touch()"'
             import_block = """sec_block_types = (ValueError, PermissionError, TypeError)"""
-            benign_payload_expr = '"1 + 1"'
+            benign_suite_code = """[
+    {
+        "id": "arithmetic_eval_alpha",
+        "input": "1 + 1",
+        "req_type": (int, str),
+        "req_keys": [],
+        "check": lambda r: r == 2 or str(r) == "2"
+    },
+    {
+        "id": "arithmetic_eval_beta",
+        "input": "10 * 5",
+        "req_type": (int, str),
+        "req_keys": [],
+        "check": lambda r: r == 50 or str(r) == "50"
+    }
+]"""
         else:
             payload_expr = f'"""\nexploit: !!python/object/apply:builtins.eval ["open(\'{sentinel_name}\', \'w\').close()"]\n"""'
             import_block = """class _EmptySecBlock(Exception): pass
 sec_block_types = (_EmptySecBlock,)"""
-            benign_payload_expr = '"test_benign_input"'
+            benign_suite_code = """[
+    {
+        "id": "generic_benign_alpha",
+        "input": "test_benign_input_alpha",
+        "req_type": str,
+        "req_keys": [],
+        "check": lambda r: len(str(r)) > 0
+    },
+    {
+        "id": "generic_benign_beta",
+        "input": "test_benign_input_beta",
+        "req_type": str,
+        "req_keys": [],
+        "check": lambda r: len(str(r)) > 0
+    }
+]"""
 
         harness_code = f'''"""
 Automated Behavioral Verification Harness for {req.cve_id}
@@ -82,6 +149,11 @@ import sys
 import os
 import json
 from pathlib import Path
+
+# Anti-evasion normalization (P0.5.5)
+# Normalize sys.argv to prevent trivial environment detection by candidate code
+if sys.argv:
+    sys.argv[0] = "{req.target_file}"
 
 # Network isolation guard: prevent child network access during behavioral verification
 try:
@@ -158,23 +230,36 @@ except sec_block_types as sec_err:
     err_str = str(sec_err)
 
     if not sentinel.exists():
-        # Positive Control Oracle: Ensure patch did not destroy legitimate functionality
+        # Multi-Input Behavioral Preservation Contract (P0.5.4)
         try:
-            benign_input = {benign_payload_expr}
-            benign_res = {func_name}(benign_input)
-            if benign_res is None:
-                print(json.dumps({{
-                    "sink_reached": True,
-                    "assertion_evaluated": True,
-                    "risky_effect_observed": False,
-                    "expected_security_exception": False,
-                    "unexpected_exception": True,
-                    "exception_type": "PositiveControlFailure",
-                    "positive_control_passed": False,
-                    "assertion": "POSITIVE_CONTROL_FAILED",
-                    "detail": "Remediation patch destroyed functionality: target function returned None on valid benign input."
-                }}))
-                sys.exit(1)
+            benign_cases = {benign_suite_code}
+            executed_contracts = []
+
+            for case in benign_cases:
+                c_id = case["id"]
+                r = {func_name}(case["input"])
+
+                if r is None:
+                    raise ValueError(f"Contract '{{c_id}}' failed: returned None")
+
+                expected_t = case["req_type"]
+                if not isinstance(r, expected_t):
+                    raise TypeError(f"Contract '{{c_id}}' failed: expected {{expected_t}}, got {{type(r).__name__}}")
+
+                if isinstance(r, (dict, list, str, set)) and len(r) == 0:
+                    raise ValueError(f"Contract '{{c_id}}' failed: returned empty dummy container")
+
+                if isinstance(r, dict):
+                    for req_k in case.get("req_keys", []):
+                        if req_k not in r:
+                            raise KeyError(f"Contract '{{c_id}}' failed: missing required key '{{req_k}}'")
+                        if r[req_k] is None:
+                            raise ValueError(f"Contract '{{c_id}}' failed: key '{{req_k}}' has None value; expected non-null data")
+
+                if "check" in case and not case["check"](r):
+                    raise ValueError(f"Contract '{{c_id}}' failed: structural invariant or semantic value check failed")
+
+                executed_contracts.append(c_id)
 
             print(json.dumps({{
                 "sink_reached": True,
@@ -184,10 +269,12 @@ except sec_block_types as sec_err:
                 "unexpected_exception": False,
                 "exception_type": err_name,
                 "positive_control_passed": True,
+                "contracts_verified": executed_contracts,
                 "assertion": "GREEN_SECURITY_BLOCK_VERIFIED",
-                "detail": f"Expected defensive security block verified ({{err_name}}) and positive control passed on benign input."
+                "detail": f"Expected defensive security block verified ({{err_name}}) and all {{len(executed_contracts)}} behavioral preservation contracts verified."
             }}))
             sys.exit(42)  # Dedicated exit code for verified defensive block
+
         except Exception as benign_err:
             b_name = type(benign_err).__name__
             print(json.dumps({{
@@ -199,7 +286,7 @@ except sec_block_types as sec_err:
                 "exception_type": b_name,
                 "positive_control_passed": False,
                 "assertion": "POSITIVE_CONTROL_FAILED",
-                "detail": f"Remediation patch destroyed functionality: raised {{b_name}} on valid benign input: {{str(benign_err)[:120]}}"
+                "detail": f"Behavioral preservation contract failed: {{b_name}}: {{str(benign_err)}}"
             }}))
             sys.exit(1)
     else:

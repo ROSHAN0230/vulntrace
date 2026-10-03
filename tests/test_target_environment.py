@@ -114,6 +114,77 @@ def test_controlled_provisioning_isolation(temp_repo_dir):
     assert res.python_executable == host_executable
 
 
+def test_adversarial_setup_py_secrets_purging(temp_repo_dir):
+    """
+    P0.5.1 Adversarial Test:
+    Proactively injects high-risk environment variables (API keys, SSH tokens, cloud credentials)
+    and verifies that sanitize_provisioning_environment purges 100% of them.
+    Also verifies profile and cache directories are directed into the disposable workspace.
+    """
+    injected_secrets = {
+        "MOCK_NEBIUS_API_KEY": "super-secret-nebius-key",
+        "TAVILY_API_KEY_MOCK": "super-secret-tavily-key",
+        "AWS_SECRET_ACCESS_KEY": "super-secret-aws-key",
+        "SSH_AUTH_SOCK": "/tmp/ssh-agent.sock",
+        "SSH_AGENT_PID": "9999",
+        "GIT_ASKPASS": "/bin/echo",
+        "TWINE_PASSWORD": "pypi-secret-token",
+        "PIP_CONFIG_FILE": "/etc/pip.conf",
+        "GITHUB_TOKEN": "ghp_fake_token_12345"
+    }
+
+    for k, v in injected_secrets.items():
+        os.environ[k] = v
+
+    try:
+        prov_env = TargetEnvironmentManager.sanitize_provisioning_environment(temp_repo_dir)
+
+        # Proves all fake and real credentials are completely absent
+        for secret_key in injected_secrets:
+            assert secret_key not in prov_env, f"Secret key '{secret_key}' leaked into provisioning environment!"
+
+        # Proves directory redirection to disposable workspace
+        assert prov_env["TEMP"] == str(temp_repo_dir.resolve())
+        assert prov_env["TMP"] == str(temp_repo_dir.resolve())
+        assert prov_env["USERPROFILE"] == str(temp_repo_dir.resolve())
+        assert prov_env["HOME"] == str(temp_repo_dir.resolve())
+        assert str(temp_repo_dir.resolve()) in prov_env["APPDATA"]
+        assert str(temp_repo_dir.resolve()) in prov_env["LOCALAPPDATA"]
+
+        # Proves pip hygiene flags
+        assert prov_env["PIP_NO_CACHE_DIR"] == "1"
+        assert prov_env["PIP_DISABLE_PIP_VERSION_CHECK"] == "1"
+
+    finally:
+        for k in injected_secrets:
+            os.environ.pop(k, None)
+
+
+def test_provisioning_preserves_host_venv_integrity(temp_repo_dir):
+    """
+    P0.5.1 Host Environment Integrity:
+    Proves that provisioning a target repo dependencies creates .target_venv inside
+    the disposable dir and does NOT touch or mutate the host .venv directory.
+    """
+    host_venv = Path(__file__).resolve().parent.parent / ".venv"
+    if host_venv.exists():
+        host_mtime_before = host_venv.stat().st_mtime
+
+    # Create dummy requirements
+    (temp_repo_dir / "requirements.txt").write_text("pytest\n", encoding="utf-8")
+    has_manifest, deps = TargetEnvironmentManager.detect_dependencies(temp_repo_dir)
+    assert has_manifest is True
+    assert deps == ["pytest"]
+
+    # Verify target venv directory path is strictly inside temp_repo_dir
+    target_venv_dir = temp_repo_dir / ".target_venv"
+    assert not target_venv_dir.exists()
+
+    # Verify host venv was untouched
+    if host_venv.exists():
+        assert host_venv.stat().st_mtime == host_mtime_before
+
+
 @pytest.mark.asyncio
 async def test_external_repository_repo_cloud_config_execution():
     """

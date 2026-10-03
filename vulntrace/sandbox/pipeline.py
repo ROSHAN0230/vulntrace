@@ -10,6 +10,7 @@ Coordinates the 6-step verification lifecycle:
 """
 
 import time
+import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional, Callable, AsyncGenerator
 from vulntrace.models import (
@@ -257,17 +258,20 @@ class VerificationPipeline:
 
             # Stage 1: Harness Synthesis
             emit("STAGE_START", "HARNESS", f"Synthesizing controlled verification harness for {req.cve_id}...")
+            sentinel_file = req.sentinel_filename or f"_sentinel_{uuid.uuid4().hex[:8]}.marker"
             harness_req = HarnessGenerateRequest(
                 repo_path=str(disposable_dir),
                 cve_id=req.cve_id,
                 target_file=resolved_target_file,
                 function_name=resolved_target_func,
                 vulnerable_call=resolved_vuln_sym,
-                sentinel_filename=req.sentinel_filename
+                sentinel_filename=sentinel_file
             )
             harness_res = HarnessSynthesizer.synthesize_harness(harness_req)
             
-            harness_file = disposable_dir / "harness_verify.py"
+            # P0.5.5: Randomized harness artifact naming to reduce trivial environment detection
+            harness_script_name = f"_eval_{uuid.uuid4().hex[:8]}.py"
+            harness_file = disposable_dir / harness_script_name
             harness_file.write_text(harness_res.harness_code, encoding="utf-8")
             emit("STAGE_COMPLETE", "HARNESS", f"Harness generated in {harness_res.latency_ms}ms targeting {resolved_target_file}:{resolved_target_func}()")
 
@@ -275,7 +279,7 @@ class VerificationPipeline:
             emit("STAGE_START", "REPRODUCTION", "Executing pre-patch verification harness in isolated sandbox...")
             pre_res = SubprocessSandboxRunner.execute_script(
                 disposable_dir=disposable_dir,
-                script_name="harness_verify.py",
+                script_name=harness_script_name,
                 sentinel_filename=harness_res.sentinel_filename,
                 on_log=lambda msg: emit("LOG", "REPRODUCTION", msg),
                 python_executable=target_py
@@ -468,7 +472,7 @@ class VerificationPipeline:
             emit("STAGE_START", "VERIFICATION", "Executing post-patch re-test in sandbox (expecting safe-block)...")
             post_res = SubprocessSandboxRunner.execute_script(
                 disposable_dir=disposable_dir,
-                script_name="harness_verify.py",
+                script_name=harness_script_name,
                 sentinel_filename=harness_res.sentinel_filename,
                 on_log=lambda msg: emit("LOG", "VERIFICATION", msg),
                 python_executable=target_py

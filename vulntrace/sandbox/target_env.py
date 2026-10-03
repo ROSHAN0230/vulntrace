@@ -85,6 +85,71 @@ class TargetEnvironmentManager:
         return has_manifest, unique_deps
 
     @classmethod
+    def sanitize_provisioning_environment(cls, disposable_dir: Path) -> Dict[str, str]:
+        """
+        Constructs a strictly sanitized environment for dependency provisioning (P0.5.1).
+        Proactively purges all credentials, API keys, tokens, auth material,
+        proxy credentials, cloud credentials, SSH-related environment variables,
+        CI secrets, and package-manager credentials.
+        Directs temporary and profile directories into the disposable workspace.
+
+        NOTE ON BOUNDARY LIMITATION:
+        Sanitizing environment variables during pip install prevents passive credential
+        theft, but arbitrary code execution during setup.py/PEP-517 build hooks remains
+        inherently dangerous without VM/container isolation.
+        """
+        disposable_dir = Path(disposable_dir).resolve()
+        appdata_dir = disposable_dir / ".appdata"
+        appdata_dir.mkdir(parents=True, exist_ok=True)
+        localappdata_dir = disposable_dir / ".localappdata"
+        localappdata_dir.mkdir(parents=True, exist_ok=True)
+
+        # Baseline minimal execution environment
+        safe_env = {
+            "SYSTEMROOT": os.environ.get("SYSTEMROOT", "C:\\Windows"),
+            "WINDIR": os.environ.get("WINDIR", "C:\\Windows"),
+            "PATH": os.environ.get("PATH", ""),
+            "TEMP": str(disposable_dir),
+            "TMP": str(disposable_dir),
+            "USERPROFILE": str(disposable_dir),
+            "HOME": str(disposable_dir),
+            "APPDATA": str(appdata_dir),
+            "LOCALAPPDATA": str(localappdata_dir),
+            "PYTHONUNBUFFERED": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PIP_NO_CACHE_DIR": "1",
+            "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+        }
+
+        # Patterns that must NEVER leak into the provisioning environment
+        prohibited_patterns = [
+            "KEY", "TOKEN", "SECRET", "AUTH", "PASS", "CRED",
+            "NEBIUS", "TAVILY", "OPENAI", "ANTHROPIC", "GEMINI",
+            "GITHUB", "GITLAB", "BITBUCKET", "AWS", "AZURE", "GCP", "GOOGLE",
+            "SSH", "PROXY_PASS", "PROXY_USER", "PROXY_AUTH", "NPM", "PYPI",
+            "PIP_INDEX", "PIP_EXTRA_INDEX",
+            "DOCKER", "KUBE", "CERT", "PRIVATE", "SIGN", "CI_", "SESSION",
+            "COOKIE", "BEARER"
+        ]
+
+        # Specific dangerous variables to purge unconditionally
+        explicit_blacklist = {
+            "SSH_AUTH_SOCK", "SSH_AGENT_PID", "GIT_ASKPASS", "SSH_ASKPASS",
+            "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+            "AZURE_CLIENT_SECRET", "GOOGLE_APPLICATION_CREDENTIALS",
+            "TWINE_USERNAME", "TWINE_PASSWORD", "PIP_CONFIG_FILE",
+            "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "NETRC", "CURL_CA_BUNDLE"
+        }
+
+        # Double check: remove anything matching prohibited patterns or blacklist
+        for k in list(safe_env.keys()):
+            k_upper = k.upper()
+            if k in explicit_blacklist or any(pat in k_upper for pat in prohibited_patterns):
+                del safe_env[k]
+
+        return safe_env
+
+    @classmethod
     def provision_target_environment(
         cls,
         disposable_dir: Path,
@@ -94,6 +159,7 @@ class TargetEnvironmentManager:
         """
         Provisions a temporary virtual environment inside disposable_dir.
         Installs declared dependencies during this setup stage, then locks network access.
+        Every provisioning subprocess receives a strictly sanitized environment (P0.5.1).
         """
         t0 = time.perf_counter()
         disposable_dir = Path(disposable_dir).resolve()
@@ -128,16 +194,20 @@ class TargetEnvironmentManager:
         target_venv_dir = disposable_dir / ".target_venv"
         target_py = target_venv_dir / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python")
 
+        # P0.5.1: Proactively sanitized provisioning environment
+        prov_env = cls.sanitize_provisioning_environment(disposable_dir)
+
         try:
             if on_log:
                 on_log(f"Creating isolated target virtualenv in {target_venv_dir.name}...")
 
-            # 1. Spawn base_py -m venv (ensuring pip/ensurepip is included)
+            # 1. Spawn base_py -m venv with sanitized environment
             venv_proc = subprocess.run(
                 [base_py, "-m", "venv", str(target_venv_dir)],
                 cwd=str(disposable_dir),
                 capture_output=True,
                 text=True,
+                env=prov_env,
                 timeout=timeout
             )
             if venv_proc.returncode != 0:
@@ -171,7 +241,13 @@ class TargetEnvironmentManager:
                 on_log("Installing target dependencies in controlled setup stage...")
 
             req_file = disposable_dir / "requirements.txt"
-            pip_cmd = [str(target_py), "-m", "pip", "install", "--no-warn-script-location", "pytest"]
+            pip_cmd = [
+                str(target_py), "-m", "pip", "install",
+                "--isolated",
+                "--no-cache-dir",
+                "--no-warn-script-location",
+                "pytest"
+            ]
             if req_file.exists():
                 pip_cmd.extend(["-r", str(req_file)])
             else:
@@ -182,6 +258,7 @@ class TargetEnvironmentManager:
                 cwd=str(disposable_dir),
                 capture_output=True,
                 text=True,
+                env=prov_env,
                 timeout=timeout
             )
 

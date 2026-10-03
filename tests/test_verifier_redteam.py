@@ -320,3 +320,150 @@ def parse_app_config(raw_yaml: str) -> dict:
     # Final verdict is genuinely GREEN_STATE_VERIFIED
     assert verdict.terminal_state == "GREEN_STATE_VERIFIED"
     assert verdict.reason.startswith("Reachable vulnerability reproduced in red state")
+
+
+def test_adversarial_patch_empty_dict_rejected(redteam_workspace):
+    """
+    P0.5.4 Adversarial Test: Patch catches exploit and returns empty dict {}.
+    Behavioral preservation oracle MUST reject this as POSITIVE_CONTROL_FAILED.
+    Verdict MUST NOT be GREEN_STATE_VERIFIED.
+    """
+    broken_code = """import yaml
+def parse_app_config(raw_yaml: str) -> dict:
+    if "open(" in str(raw_yaml):
+        raise yaml.constructor.ConstructorError("blocked")
+    return {}
+"""
+    exec_res, reg_res, verdict = _evaluate_candidate_patch(redteam_workspace, broken_code)
+    assert exec_res.assertion_result == "POSITIVE_CONTROL_FAILED"
+    assert exec_res.exit_code == 1
+    assert exec_res.reproduction_state != "GREEN_STATE_BLOCKED"
+    assert verdict.terminal_state != "GREEN_STATE_VERIFIED"
+
+
+def test_adversarial_patch_empty_string_rejected(redteam_workspace):
+    """
+    P0.5.4 Adversarial Test: Patch catches exploit and returns empty string "".
+    Oracle rejects type mismatch / empty container.
+    """
+    broken_code = """import yaml
+def parse_app_config(raw_yaml: str) -> dict:
+    if "open(" in str(raw_yaml):
+        raise yaml.constructor.ConstructorError("blocked")
+    return ""
+"""
+    exec_res, reg_res, verdict = _evaluate_candidate_patch(redteam_workspace, broken_code)
+    assert exec_res.assertion_result == "POSITIVE_CONTROL_FAILED"
+    assert exec_res.exit_code == 1
+    assert exec_res.reproduction_state != "GREEN_STATE_BLOCKED"
+    assert verdict.terminal_state != "GREEN_STATE_VERIFIED"
+
+
+def test_adversarial_patch_constant_string_rejected(redteam_workspace):
+    """
+    P0.5.4 Adversarial Test: Patch returns constant string 'blocked'.
+    Oracle rejects type mismatch.
+    """
+    broken_code = """import yaml
+def parse_app_config(raw_yaml: str) -> dict:
+    if "open(" in str(raw_yaml):
+        raise yaml.constructor.ConstructorError("blocked")
+    return "blocked"
+"""
+    exec_res, reg_res, verdict = _evaluate_candidate_patch(redteam_workspace, broken_code)
+    assert exec_res.assertion_result == "POSITIVE_CONTROL_FAILED"
+    assert exec_res.exit_code == 1
+    assert exec_res.reproduction_state != "GREEN_STATE_BLOCKED"
+    assert verdict.terminal_state != "GREEN_STATE_VERIFIED"
+
+
+def test_adversarial_patch_constant_integer_rejected(redteam_workspace):
+    """
+    P0.5.4 Adversarial Test: Patch returns constant integer 42.
+    Oracle rejects type mismatch.
+    """
+    broken_code = """import yaml
+def parse_app_config(raw_yaml: str) -> dict:
+    if "open(" in str(raw_yaml):
+        raise yaml.constructor.ConstructorError("blocked")
+    return 42
+"""
+    exec_res, reg_res, verdict = _evaluate_candidate_patch(redteam_workspace, broken_code)
+    assert exec_res.assertion_result == "POSITIVE_CONTROL_FAILED"
+    assert exec_res.exit_code == 1
+    assert exec_res.reproduction_state != "GREEN_STATE_BLOCKED"
+    assert verdict.terminal_state != "GREEN_STATE_VERIFIED"
+
+
+def test_adversarial_patch_structurally_incomplete_rejected(redteam_workspace):
+    """
+    P0.5.4 Adversarial Test: Patch returns incomplete dict missing required 'port' key.
+    Oracle rejects missing required key.
+    """
+    broken_code = """import yaml
+def parse_app_config(raw_yaml: str) -> dict:
+    if "open(" in str(raw_yaml):
+        raise yaml.constructor.ConstructorError("blocked")
+    return {"service": "auth"}
+"""
+    exec_res, reg_res, verdict = _evaluate_candidate_patch(redteam_workspace, broken_code)
+    assert exec_res.assertion_result == "POSITIVE_CONTROL_FAILED"
+    assert exec_res.exit_code == 1
+    assert exec_res.reproduction_state != "GREEN_STATE_BLOCKED"
+    assert verdict.terminal_state != "GREEN_STATE_VERIFIED"
+
+
+def test_adversarial_patch_missing_required_fields_null_value_rejected(redteam_workspace):
+    """
+    P0.5.4 Adversarial Test: Patch returns dict with 'port': None.
+    Oracle rejects null value for required field.
+    """
+    broken_code = """import yaml
+def parse_app_config(raw_yaml: str) -> dict:
+    if "open(" in str(raw_yaml):
+        raise yaml.constructor.ConstructorError("blocked")
+    return {"service": "auth", "port": None}
+"""
+    exec_res, reg_res, verdict = _evaluate_candidate_patch(redteam_workspace, broken_code)
+    assert exec_res.assertion_result == "POSITIVE_CONTROL_FAILED"
+    assert exec_res.exit_code == 1
+    assert exec_res.reproduction_state != "GREEN_STATE_BLOCKED"
+    assert verdict.terminal_state != "GREEN_STATE_VERIFIED"
+
+
+def test_adversarial_patch_split_brain_multi_input_failure(redteam_workspace):
+    """
+    P0.5.4 Adversarial Test: Patch passes input 1 ('auth') but returns {} on input 2 ('core-api').
+    Oracle catches multi-input contract failure on input 2!
+    """
+    broken_code = """import yaml
+def parse_app_config(raw_yaml: str) -> dict:
+    if "open(" in str(raw_yaml):
+        raise yaml.constructor.ConstructorError("blocked")
+    if "auth" in str(raw_yaml):
+        return {"service": "auth", "port": 9000}
+    return {}
+"""
+    exec_res, reg_res, verdict = _evaluate_candidate_patch(redteam_workspace, broken_code)
+    assert exec_res.assertion_result == "POSITIVE_CONTROL_FAILED"
+    assert exec_res.exit_code == 1
+    assert exec_res.reproduction_state != "GREEN_STATE_BLOCKED"
+    assert verdict.terminal_state != "GREEN_STATE_VERIFIED"
+
+
+def test_adversarial_anti_evasion_argv_and_stack_inspection(redteam_workspace):
+    """
+    P0.5.5 Anti-Evasion Test: Patch attempts to detect test harness via sys.argv.
+    Harness normalizes sys.argv so 'harness' is absent.
+    Even if it tries to fake defensive block, behavioral contract fails.
+    """
+    evasive_code = """import sys, inspect, yaml
+def parse_app_config(raw_yaml: str) -> dict:
+    is_test = any("harness" in str(arg).lower() for arg in sys.argv)
+    if is_test:
+        raise yaml.constructor.ConstructorError("fake defensive block")
+    return yaml.load(raw_yaml, Loader=yaml.Loader)
+"""
+    exec_res, reg_res, verdict = _evaluate_candidate_patch(redteam_workspace, evasive_code)
+    assert exec_res.reproduction_state != "GREEN_STATE_BLOCKED"
+    assert verdict.terminal_state != "GREEN_STATE_VERIFIED"
