@@ -1,6 +1,6 @@
 """
-VulnTrace Core Architecture Package (P0.6)
-Execution backend abstractions, isolation tiers, attestation, and factories.
+VulnTrace Core Architecture Package (P0.6/P0.7)
+Execution backend abstractions, isolation tiers, attestation, factories, and security policy.
 """
 
 from vulntrace.core.backend import (
@@ -13,6 +13,12 @@ from vulntrace.core.backend import (
 from vulntrace.core.local_backend import LocalSubprocessBackend
 from vulntrace.core.container_backend import ContainerExecutionBackend
 from vulntrace.core.factory import BackendFactory
+from vulntrace.core.policy import (
+    ExecutionOperation,
+    AssuranceLevel,
+    PolicyDecision,
+    SecurityPolicyEngine
+)
 
 __all__ = [
     "IsolationTier",
@@ -22,5 +28,9 @@ __all__ = [
     "ExecutionBackend",
     "LocalSubprocessBackend",
     "ContainerExecutionBackend",
-    "BackendFactory"
+    "BackendFactory",
+    "ExecutionOperation",
+    "AssuranceLevel",
+    "PolicyDecision",
+    "SecurityPolicyEngine"
 ]

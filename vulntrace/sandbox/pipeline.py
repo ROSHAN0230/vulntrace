@@ -75,12 +75,35 @@ class VerificationPipeline:
                     timestamp=time.time()
                 ))
 
+        # Policy Evaluation & Gating (P0.7)
+        from vulntrace.core.policy import SecurityPolicyEngine, ExecutionOperation, AssuranceLevel
+        assurance_level = SecurityPolicyEngine.evaluate_backend_assurance(backend.capabilities)
+        policy_decision = SecurityPolicyEngine.enforce_operation_policy(
+            ExecutionOperation.HIGH_ASSURANCE_FINAL_VERDICT,
+            backend.capabilities,
+            require_high_assurance=req.require_high_assurance
+        )
+        if not policy_decision.allowed:
+            emit("ERROR", "POLICY", f"Security policy blocked execution: {policy_decision.rationale}", policy_decision.model_dump())
+            raise PermissionError(f"Execution policy violation: {policy_decision.policy_violations}")
+
+        emit("LOG", "POLICY", f"Security Policy Active: {assurance_level.value} on {backend.capabilities.tier.value}.", policy_decision.model_dump())
+
         emit("STAGE_START", "SANDBOX", f"Initializing disposable workspace on backend ({backend.capabilities.tier.value})...")
         workspace_id = await backend.initialize_workspace(source_repo)
         disposable_dir = Path(workspace_id)
         emit("LOG", "SANDBOX", f"Disposable workspace mounted at: {workspace_id}")
 
-        # Controlled Target-Environment Setup Path (P0.2/P0.6)
+        # Controlled Target-Environment Setup Path (P0.2/P0.6/P0.7)
+        prov_decision = SecurityPolicyEngine.enforce_operation_policy(
+            ExecutionOperation.DEPENDENCY_PROVISIONING,
+            backend.capabilities,
+            require_high_assurance=req.require_high_assurance
+        )
+        if not prov_decision.allowed:
+            emit("ERROR", "POLICY", f"Dependency provisioning blocked: {prov_decision.rationale}")
+            raise PermissionError(f"Dependency provisioning blocked: {prov_decision.policy_violations}")
+
         emit("STAGE_START", "SETUP", f"Detecting target dependencies for {source_repo.name}...")
         has_manifest, detected_deps = TargetEnvironmentManager.detect_dependencies(disposable_dir)
         prov_result = await backend.provision_dependencies(
@@ -268,7 +291,9 @@ class VerificationPipeline:
                     cloud_status="PERMISSION_DENIED (HTTP 403)",
                     total_pipeline_ms=round(dt_total, 2),
                     isolation_tier=backend.capabilities.tier.value,
-                    isolation_attestation=attestation.model_dump()
+                    isolation_attestation=attestation.model_dump(),
+                    assurance_level=assurance_level.value,
+                    policy_decision=policy_decision.model_dump()
                 )
 
             emit("STATE_TRANSITION", "AST", f"REACHABLE VULNERABLE CALL PATH IDENTIFIED: Call graph path discovered to {resolved_target_file}:{resolved_target_func}()")
@@ -627,7 +652,9 @@ class VerificationPipeline:
                 cloud_status="PERMISSION_DENIED (HTTP 403)",
                 total_pipeline_ms=round(dt_total, 2),
                 isolation_tier=backend.capabilities.tier.value,
-                isolation_attestation=attestation.model_dump()
+                isolation_attestation=attestation.model_dump(),
+                assurance_level=assurance_level.value,
+                policy_decision=policy_decision.model_dump()
             )
 
         finally:

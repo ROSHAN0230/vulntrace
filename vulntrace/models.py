@@ -225,6 +225,7 @@ class VerificationPipelineRequest(BaseModel):
     query_tavily: bool = True
     advisory_summary: Optional[str] = None
     execution_backend: Optional[str] = None
+    require_high_assurance: bool = False
 
 # --- Formal Evidence Schema (Phase 4) ---
 class RepositoryEvidence(BaseModel):
@@ -312,6 +313,8 @@ class FinalVerdictRecord(BaseModel):
         "Local subprocess sandbox shares host kernel and is labeled LOCAL_SUBPROCESS_FALLBACK.",
         "ConTree cloud execution is currently blocked (PERMISSION_DENIED HTTP 403)."
     ])
+    assurance_level: Optional[str] = None
+    policy_audit: Optional[Dict[str, Any]] = None
 
 class VerificationPipelineResponse(BaseModel):
     cve_id: str
@@ -330,6 +333,8 @@ class VerificationPipelineResponse(BaseModel):
     total_pipeline_ms: float
     isolation_tier: Optional[str] = "LOCAL_SUBPROCESS_FALLBACK"
     isolation_attestation: Optional[Dict[str, Any]] = None
+    assurance_level: Optional[str] = None
+    policy_decision: Optional[Dict[str, Any]] = None
 
 # --- Streaming Pipeline Event ---
 class PipelineEvent(BaseModel):

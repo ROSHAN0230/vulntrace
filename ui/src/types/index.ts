@@ -168,6 +168,8 @@ export interface FinalVerdictRecord {
   evidence_summary: Record<string, any>;
   is_safe_claim: boolean;
   limitations: string[];
+  assurance_level?: string;
+  policy_audit?: Record<string, any>;
 }
 
 export interface VerificationPipelineResponse {
@@ -195,6 +197,8 @@ export interface VerificationPipelineResponse {
   total_pipeline_ms: number;
   isolation_tier?: string;
   isolation_attestation?: Record<string, any>;
+  assurance_level?: string;
+  policy_decision?: Record<string, any>;
 }
 
 export interface BenchmarkScenarioInfo {

@@ -275,11 +275,20 @@ export const VerificationWorkbench: React.FC<VerificationWorkbenchProps> = ({
               </div>
             </div>
             <div className="flex flex-col md:items-end gap-1">
-              <span className={`text-[10px] uppercase tracking-widest px-2 py-0.5 rounded bg-surface-inset border ${data.isolation_tier === 'OCI_CONTAINER_ISOLATED' ? 'border-emerald-600/40 text-emerald-300' : 'border-border-subtle text-amber-300'}`}>
-                TIER: {data.isolation_tier || data.sandbox_engine}
-              </span>
+              <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                <span className={`text-[10px] uppercase tracking-widest px-2 py-0.5 rounded bg-surface-inset border ${data.isolation_tier === 'OCI_CONTAINER_ISOLATED' ? 'border-emerald-600/40 text-emerald-300' : 'border-border-subtle text-amber-300'}`}>
+                  TIER: {data.isolation_tier || data.sandbox_engine}
+                </span>
+                <span className={`text-[10px] uppercase tracking-widest px-2 py-0.5 rounded font-bold border ${
+                  (data.assurance_level === 'HIGH_ASSURANCE_CONTAINED' || data.verdict_record?.assurance_level === 'HIGH_ASSURANCE_CONTAINED')
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                    : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                }`}>
+                  ASSURANCE: {data.assurance_level || data.verdict_record?.assurance_level || 'DEGRADED_LOCAL_FALLBACK'}
+                </span>
+              </div>
               <span className="text-[9px] text-slate-400">
-                NETWORK: {data.isolation_attestation?.network_mode || 'DENIED'}
+                NETWORK: {data.isolation_attestation?.network_mode || 'DENIED'} • ATTESTATION: {data.isolation_attestation ? 'PARENT_VERIFIED' : 'LOCAL'}
               </span>
             </div>
           </div>
@@ -568,24 +577,62 @@ export const VerificationWorkbench: React.FC<VerificationWorkbenchProps> = ({
             </div>
           </div>
 
-          {/* Section 10 & 11: Static Analysis Limitations & Sandbox Disclosures */}
-          <div className="bg-surface-1 border border-border-subtle rounded p-3 text-xs space-y-2">
-            <div className="flex items-center gap-2 text-slate-300 font-semibold border-b border-border-subtle pb-1.5">
-              <Info className="w-4 h-4 text-amber-400" />
-              <span>Security Boundaries & Engine Disclosures</span>
+          {/* Section 10 & 11: Static Analysis Limitations, Security Policy & Sandbox Disclosures */}
+          <div className="bg-surface-1 border border-border-subtle rounded p-3 text-xs space-y-3">
+            <div className="flex items-center justify-between border-b border-border-subtle pb-1.5">
+              <div className="flex items-center gap-2 text-slate-300 font-semibold">
+                <Info className="w-4 h-4 text-amber-400" />
+                <span>Security Boundaries, Capability Policy & Engine Disclosures</span>
+              </div>
+              <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                (data.assurance_level === 'HIGH_ASSURANCE_CONTAINED' || data.verdict_record?.assurance_level === 'HIGH_ASSURANCE_CONTAINED')
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                  : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+              }`}>
+                POLICY: {(data.assurance_level === 'HIGH_ASSURANCE_CONTAINED' || data.verdict_record?.assurance_level === 'HIGH_ASSURANCE_CONTAINED') ? 'HIGH_ASSURANCE_CONTAINED' : 'DEGRADED_LOCAL_FALLBACK'}
+              </span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] text-slate-400">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px] text-slate-400">
               <div className="space-y-1">
-                <span className="font-semibold text-slate-300">Static AST Reachability Scope:</span>
+                <span className="font-semibold text-slate-300">Static AST Reachability:</span>
                 <p>
                   Evaluates static AST call chains and alias imports. Does <strong className="text-amber-300">NOT</strong> resolve reflection, dynamic imports (<code className="text-slate-300">importlib</code>), runtime monkey-patching, or dynamic dispatch.
                 </p>
               </div>
               <div className="space-y-1">
-                <span className="font-semibold text-slate-300">Subprocess Isolation Boundary:</span>
+                <span className="font-semibold text-slate-300">Execution Substrate Tier:</span>
                 <p>
-                  Execution occurs in disposable <code className="text-slate-300">%TEMP%</code> directories with purged environment credentials and process-tree cleanup. Labeled <strong className="text-amber-300">LOCAL_SUBPROCESS_FALLBACK</strong> (shares host kernel and localhost loopback). Cloud ConTree remains blocked (<code className="text-slate-300">HTTP 403</code>).
+                  Current backend: <strong className="text-slate-200">{data.isolation_tier || data.sandbox_engine}</strong>.
+                  {data.isolation_tier === 'OCI_CONTAINER_ISOLATED' ? (
+                    <span className="text-emerald-300 block mt-0.5">
+                      True rootless OCI container with kernel-level network denial (--network none), host FS hidden, and cgroup limits.
+                    </span>
+                  ) : (
+                    <span className="text-amber-300 block mt-0.5">
+                      Host subprocess with Win32 Job Object limits and sanitized env. Host filesystem remains readable subject to OS permissions.
+                    </span>
+                  )}
                 </p>
+              </div>
+              <div className="space-y-1">
+                <span className="font-semibold text-slate-300">Active Boundary Caveats:</span>
+                <ul className="list-disc pl-3.5 space-y-0.5 text-[10px] text-slate-400">
+                  {((data.verdict_record?.policy_audit?.assurance_caveats || data.policy_decision?.boundary_caveats) as string[] | undefined)?.map((c, i) => (
+                    <li key={i}>{c}</li>
+                  )) || (
+                    data.isolation_tier === 'OCI_CONTAINER_ISOLATED' ? (
+                      <>
+                        <li>Shares Linux/WSL2 host kernel (cgroups/namespaces). Not hardware microVM.</li>
+                        <li>Disposable workspace directory is bind-mounted at /workspace.</li>
+                      </>
+                    ) : (
+                      <>
+                        <li>Process executes under ambient host OS user identity.</li>
+                        <li>Host filesystem remains readable under ambient DACLs.</li>
+                      </>
+                    )
+                  )}
+                </ul>
               </div>
             </div>
           </div>

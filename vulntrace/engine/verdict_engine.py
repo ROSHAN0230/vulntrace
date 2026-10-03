@@ -111,6 +111,36 @@ class VerdictEngine:
             "cloud_status": exec_ev.cloud_status
         }
 
+        # Derive Assurance Level and Policy Audit (P0.7)
+        from vulntrace.core.policy import SecurityPolicyEngine
+        from vulntrace.core.backend import BackendCapabilities
+
+        capabilities = None
+        if getattr(exec_ev, "capabilities", None):
+            if isinstance(exec_ev.capabilities, dict):
+                try:
+                    capabilities = BackendCapabilities.model_validate(exec_ev.capabilities)
+                except Exception:
+                    pass
+            elif isinstance(exec_ev.capabilities, BackendCapabilities):
+                capabilities = exec_ev.capabilities
+
+        if capabilities is None:
+            tier_str = getattr(exec_ev, "isolation_tier", exec_ev.sandbox_engine) or "LOCAL_SUBPROCESS_FALLBACK"
+            if "CONTAINER" in tier_str.upper() or "OCI" in tier_str.upper():
+                from vulntrace.core.container_backend import ContainerExecutionBackend
+                capabilities = ContainerExecutionBackend().capabilities
+            else:
+                from vulntrace.core.local_backend import LocalSubprocessBackend
+                capabilities = LocalSubprocessBackend().capabilities
+
+        policy_audit = SecurityPolicyEngine.audit_verdict_assurance(capabilities, terminal_state)
+        assurance_level = policy_audit["assurance_level"]
+
+        evidence_summary["assurance_level"] = assurance_level
+        evidence_summary["is_hardened_container"] = policy_audit["is_hardened_container"]
+        evidence_summary["policy_status"] = policy_audit["policy_status"]
+
         return FinalVerdictRecord(
             terminal_state=terminal_state,
             cve_id=cve_id,
@@ -118,5 +148,7 @@ class VerdictEngine:
             reason=reason,
             timestamp=time.time(),
             evidence_summary=evidence_summary,
-            is_safe_claim=False
+            is_safe_claim=False,
+            assurance_level=assurance_level,
+            policy_audit=policy_audit
         )

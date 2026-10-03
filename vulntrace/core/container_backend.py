@@ -121,34 +121,85 @@ class ContainerExecutionBackend(ExecutionBackend):
         on_log: Optional[Callable[[str], None]] = None
     ) -> ExecutionCommandResult:
         """
-        Validates target dependencies. For OCI container backend, common security verification
-        dependencies (PyYAML, pytest) are baked into the verified sandbox base image.
+        Validates and provisions target dependencies inside the isolated container tier.
+        If the workspace contains setup.py or build hooks, they are executed strictly
+        inside the container with --network none, --cap-drop ALL, and no host credentials.
+        Common security verification dependencies (PyYAML, pytest) are pre-baked into the image.
         """
         t0 = time.perf_counter()
         workspace_path = Path(workspace_id)
         has_manifest, detected_deps = TargetEnvironmentManager.detect_dependencies(workspace_path)
+        setup_py = workspace_path / "setup.py"
+
+        exit_code = 0
+        stdout = f"Dependencies provisioned in OCI base image ({len(detected_deps)} detected)."
+        stderr = ""
+        setup_executed = False
+
+        if setup_py.exists():
+            setup_executed = True
+            if on_log:
+                on_log("OCI Backend: Executing setup.py build inside isolated container tier (--network none, --cap-drop ALL)...")
+
+            wsl_path = self.to_wsl_path(workspace_path)
+            cmd = self._build_cli_prefix() + [
+                "podman", "run", "--rm",
+                "--network", "none",
+                "--memory", "512m",
+                "--cpus", "1.0",
+                "--pids-limit", "128",
+                "--cap-drop", "ALL",
+                "--security-opt", "no-new-privileges",
+                "-v", f"{wsl_path}:/workspace:rw",
+                "-w", "/workspace",
+                self.IMAGE_NAME,
+                "python3", "setup.py", "build"
+            ]
+
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout
+                )
+                exit_code = proc.returncode
+                stdout = proc.stdout or ""
+                stderr = proc.stderr or ""
+            except subprocess.TimeoutExpired:
+                exit_code = -9
+                stderr = f"OCI container setup.py build timed out after {timeout}s."
+            except Exception as e:
+                exit_code = 1
+                stderr = f"OCI container setup.py execution failed: {e}"
+
         latency_ms = (time.perf_counter() - t0) * 1000.0
-
-        if on_log:
-            on_log(f"OCI Backend: Base image pre-loaded with verified dependencies. Detected {len(detected_deps)} repo dependencies.")
-
         attestation = self.generate_attestation(workspace_id)
+        parent_validated = (exit_code == 0)
+        validation_notes = (
+            "OCI container workspace setup.py built under isolated container tier."
+            if setup_executed and exit_code == 0
+            else ("OCI container image pre-provisioned with verified runtime dependencies." if exit_code == 0 else f"OCI container setup.py failed with code {exit_code}")
+        )
+
         return ExecutionCommandResult(
-            exit_code=0,
-            stdout=f"Dependencies provisioned in OCI base image ({len(detected_deps)} detected).",
-            stderr="",
+            exit_code=exit_code,
+            stdout=stdout,
+            stderr=stderr,
             latency_ms=round(latency_ms, 2),
-            parent_validated=True,
-            validation_notes="OCI container image pre-provisioned with verified runtime dependencies.",
+            parent_validated=parent_validated,
+            validation_notes=validation_notes,
             structured_evidence={
                 "has_manifest": has_manifest,
                 "detected_dependencies": detected_deps,
-                "provisioned": True,
+                "provisioned": (exit_code == 0),
                 "image": self.IMAGE_NAME,
                 "network_isolated": True,
+                "setup_executed_in_container": setup_executed,
                 "setup_latency_ms": round(latency_ms, 2)
             },
-            attestation=attestation
+            attestation=attestation,
+            error=stderr if exit_code != 0 else None
         )
 
     async def execute_script(
