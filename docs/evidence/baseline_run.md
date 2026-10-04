@@ -392,3 +392,46 @@ RESULT: REPOSITORY SECRETS AUDIT PASSED (0 secrets found)
 =================================================================
 ```
 
+---
+
+## 5. GitHub Actions CI Verification (Milestone M0 Final Closure)
+
+### 5.1 CI Incident & Root Cause Analysis
+- **Failing Commit:** `13a3962659e4f1253197d02747f77204a6f28b94` (Workflow Run `37172455259`)
+- **Failing Step:** Step 6: "Run Test Suite" (`pytest -v -m "not container" tests/`), Process exit code 1.
+- **Root Cause:**
+  1. *Runner Tooling vs. Substrate State:* The GitHub Actions runner (`ubuntu-latest`) has `podman` CLI pre-installed, but lacks the offline pre-baked container image `vulntrace-sandbox-base:latest`.
+  2. *False Positive Substrate Detection:* In `vulntrace/core/container_backend.py`, `is_available()` merely checked `podman --version` without verifying `podman image exists <IMAGE_NAME>`. This caused `BackendFactory.resolve_best_available_backend()` to falsely resolve `ContainerExecutionBackend` for generic tests (`test_mutations`, `test_remediation_pipeline`, `test_target_environment`), failing with container exit code 125.
+  3. *Unregistered & Missing Markers:* `container`, `windows`, and `asyncio` markers were not registered in `pyproject.toml`, and container test files (`test_container_backend.py`, `test_provisioning_security.py`, `test_backend_conformance.py`) were not tagged with `pytest.mark.container`. Pytest thus attempted to execute container tests in CI instead of deselecting them via `-m "not container"`.
+
+### 5.2 Resolution Implemented
+1. `vulntrace/core/container_backend.py`: Updated `ContainerExecutionBackend.is_available()` to verify `podman image exists vulntrace-sandbox-base:latest` and added a class-level cache (`_cached_available`) to prevent repeated subprocess overhead.
+2. `pyproject.toml`: Registered `container`, `windows`, and `asyncio` in `[tool.pytest.ini_options].markers`.
+3. Explicit Test Marking:
+   - `tests/test_container_backend.py`: Added module-level `pytestmark = pytest.mark.container`.
+   - `tests/test_provisioning_security.py`: Added module-level `pytestmark = pytest.mark.container`.
+   - `tests/test_backend_conformance.py`: Decorated `OCI_CONTAINER_ISOLATED` parameter with `pytest.param(..., marks=pytest.mark.container)`.
+   - `tests/test_sandbox_boundary.py`: Marked `test_job_object_orphaned_detached_child_process_termination` with `@pytest.mark.windows`.
+
+### 5.3 Local Regression Output
+- **Full Test Suite (`pytest -v`):** 108 passed in 147.79s (Windows 11 + WSL2 Ubuntu Podman 5.7.0).
+- **CI Matrix Filter (`pytest -v -m "not container" tests/`):** 87 passed, 21 deselected in 135.65s (0 failures, 0 errors).
+
+### 5.4 Final GitHub Actions Run Evidence
+- **Final Commit SHA:** `f26dfd0135ab3d14aeadf25e7ee43a3ba33964aa`
+- **Workflow Run ID:** `37177315205`
+- **Workflow URL:** [https://github.com/ROSHAN0230/vulntrace/actions/runs/37177315205](https://github.com/ROSHAN0230/vulntrace/actions/runs/37177315205)
+- **Status:** `completed`
+- **Conclusion:** `success` (GREEN)
+- **Step Execution Summary:**
+  1. Set up job: `success`
+  2. Checkout repository with submodules: `success`
+  3. Set up Python: `success`
+  4. Install dependencies: `success`
+  5. Run Ruff Linting: `success`
+  6. Run Test Suite: `success`
+  7. Post Set up Python: `success`
+  8. Post Checkout repository with submodules: `success`
+  9. Complete job: `success`
+
+
