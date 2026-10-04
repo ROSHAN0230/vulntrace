@@ -8,7 +8,7 @@ import ast
 import time
 import difflib
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Optional
 from vulntrace.agent.nemotron_client import NemotronClient
 from vulntrace.models import RemediationRequest, RemediationResponse
 

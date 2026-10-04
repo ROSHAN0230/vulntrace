@@ -5,7 +5,7 @@ from vulntrace.models import VerificationPipelineRequest
 
 @pytest.mark.asyncio
 async def test_end_to_end_verification_pipeline():
-    sample_repo = (Path(__file__).resolve().parent.parent / "sample_repo").resolve()
+    sample_repo = (Path(__file__).resolve().parent / "fixtures" / "sample_repo").resolve()
     assert sample_repo.exists()
 
     events = []

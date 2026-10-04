@@ -8,17 +8,13 @@ and validates candidate patches against syntax errors and empty diffs.
 import pytest
 import shutil
 import tempfile
-import asyncio
 from pathlib import Path
 from vulntrace.sandbox.runner import SubprocessSandboxRunner
-from vulntrace.sandbox.pipeline import VerificationPipeline
 from vulntrace.analyzer.ast_visitor import AstReachabilityAnalyzer
 from vulntrace.agent.patcher import RemediationPatcher
 from vulntrace.models import (
     AstAnalyzeRequest,
-    VerificationPipelineRequest,
-    RemediationRequest,
-    HarnessGenerateRequest
+    RemediationRequest
 )
 
 @pytest.fixture

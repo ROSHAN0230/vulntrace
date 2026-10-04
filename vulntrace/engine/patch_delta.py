@@ -6,7 +6,6 @@ and minimality assessments.
 """
 
 import re
-from typing import Dict, Any, List
 from vulntrace.models import PatchDeltaMetadata
 
 class PatchDeltaAnalyzer:

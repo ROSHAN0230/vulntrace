@@ -8,16 +8,11 @@ Verifies that:
 5. VerificationPipeline accepts ExecutionBackend and propagates isolation attestation to verdict evidence.
 """
 
-import sys
 import pytest
 from pathlib import Path
 
 from vulntrace.core.backend import (
-    IsolationTier,
-    BackendCapabilities,
-    ExecutionAttestation,
-    ExecutionCommandResult,
-    ExecutionBackend
+    IsolationTier
 )
 from vulntrace.core.local_backend import LocalSubprocessBackend
 from vulntrace.models import (

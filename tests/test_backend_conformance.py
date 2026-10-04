@@ -11,8 +11,6 @@ against mandatory security guarantees:
 7. Resource Limits: Memory and process concurrency limits enforced where claimed.
 """
 
-import os
-import sys
 import time
 import pytest
 from pathlib import Path

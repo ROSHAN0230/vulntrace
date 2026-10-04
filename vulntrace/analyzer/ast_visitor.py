@@ -5,7 +5,7 @@ builds directed call graphs, and determines reachability from entrypoints.
 """
 
 from pathlib import Path
-from typing import List, Dict, Set, Tuple, Optional
+from typing import List, Dict, Set, Tuple, Optional, Any
 import ast
 import time
 from collections import deque

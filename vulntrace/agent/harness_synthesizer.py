@@ -8,10 +8,8 @@ Generates controlled, deterministic verification harnesses with explicit behavio
 - Exit 1: UNEXPECTED_FAILURE (Process crash or uncaught unexpected error - NEVER treated as green!)
 """
 
-import ast
 import time
 from pathlib import Path
-from typing import Optional, List, Dict, Any
 from vulntrace.models import HarnessGenerateRequest, HarnessGenerateResponse
 
 class HarnessSynthesizer:
@@ -28,9 +26,6 @@ class HarnessSynthesizer:
     @classmethod
     def synthesize_harness(cls, req: HarnessGenerateRequest) -> HarnessGenerateResponse:
         t0 = time.perf_counter()
-        repo_dir = Path(req.repo_path).resolve()
-        target_path = repo_dir / req.target_file
-
         module_import = cls._resolve_module_import_path(req.target_file)
         func_name = req.function_name
         vuln_sym = req.vulnerable_call.lower()

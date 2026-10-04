@@ -1,4 +1,3 @@
-import pytest
 from service import public_api_handler, get_service_status
 
 def test_valid_config():

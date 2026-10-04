@@ -10,14 +10,11 @@ Verifies:
 7. Full Verification Pipeline: End-to-end execution under OCI_CONTAINER_ISOLATED tier.
 """
 
-import os
-import sys
 import tempfile
 import pytest
 from pathlib import Path
 
 from vulntrace.core.backend import IsolationTier
-from vulntrace.core.local_backend import LocalSubprocessBackend
 from vulntrace.core.container_backend import ContainerExecutionBackend
 from vulntrace.core.factory import BackendFactory
 from vulntrace.models import VerificationPipelineRequest
@@ -292,7 +289,7 @@ class TestFullPipelineWithContainerBackend:
 
     @pytest.mark.asyncio
     async def test_pipeline_e2e_remediation_under_container(self, container_backend):
-        sample_repo = (Path(__file__).resolve().parent.parent / "sample_repo").resolve()
+        sample_repo = (Path(__file__).resolve().parent / "fixtures" / "sample_repo").resolve()
         req = VerificationPipelineRequest(
             repo_path=str(sample_repo),
             cve_id="CVE-2020-14343",

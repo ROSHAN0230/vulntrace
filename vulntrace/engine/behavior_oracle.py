@@ -10,8 +10,7 @@ Validates that remediation patches preserve authentic application semantics:
 5. Prevention of dummy stubs or split-brain evasion
 """
 
-import json
-from typing import Dict, Any, List, Optional, Tuple, Callable
+from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, field
 
 

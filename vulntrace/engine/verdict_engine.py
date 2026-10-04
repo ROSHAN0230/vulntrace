@@ -6,7 +6,6 @@ PatchEvidence, RegressionEvidence, and ExecutionEvidence.
 """
 
 import time
-from typing import Dict, Any, List
 from vulntrace.models import (
     RepositoryEvidence,
     AdvisoryEvidence,

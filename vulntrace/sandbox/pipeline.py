@@ -12,7 +12,7 @@ Coordinates the 6-step verification lifecycle:
 import time
 import uuid
 from pathlib import Path
-from typing import Dict, Any, Optional, Callable, AsyncGenerator
+from typing import Dict, Any, Optional, Callable
 from vulntrace.models import (
     VerificationPipelineRequest,
     VerificationPipelineResponse,
@@ -29,13 +29,11 @@ from vulntrace.models import (
     BehaviorEvidence,
     PatchEvidence,
     RegressionEvidence,
-    ExecutionEvidence,
-    FinalVerdictRecord
+    ExecutionEvidence
 )
 from vulntrace.sandbox.runner import SubprocessSandboxRunner
 from vulntrace.sandbox.target_env import TargetEnvironmentManager
 from vulntrace.core.backend import ExecutionBackend, IsolationTier
-from vulntrace.core.local_backend import LocalSubprocessBackend
 from vulntrace.core.factory import BackendFactory
 from vulntrace.analyzer.ast_visitor import AstReachabilityAnalyzer
 from vulntrace.agent.harness_synthesizer import HarnessSynthesizer
@@ -76,7 +74,7 @@ class VerificationPipeline:
                 ))
 
         # Policy Evaluation & Gating (P0.7)
-        from vulntrace.core.policy import SecurityPolicyEngine, ExecutionOperation, AssuranceLevel
+        from vulntrace.core.policy import SecurityPolicyEngine, ExecutionOperation
         assurance_level = SecurityPolicyEngine.evaluate_backend_assurance(backend.capabilities)
         policy_decision = SecurityPolicyEngine.enforce_operation_policy(
             ExecutionOperation.HIGH_ASSURANCE_FINAL_VERDICT,
@@ -445,7 +443,7 @@ class VerificationPipeline:
             # Incorporate Tavily threat intelligence into advisory prompt for Nemotron
             advisory_context = req.advisory_summary or f"Remediate {req.cve_id} in {resolved_target_file}:{resolved_target_func}(): unsafe {resolved_vuln_sym} deserialization."
             if tavily_findings:
-                advisory_context += f"\n\nReal-Time Verified Threat Intelligence & Exploitation Context (via Tavily Search):\n"
+                advisory_context += "\n\nReal-Time Verified Threat Intelligence & Exploitation Context (via Tavily Search):\n"
                 for idx, finding in enumerate(tavily_findings[:3], 1):
                     advisory_context += f"[{idx}] {finding.title}\nURL: {finding.url}\nContext: {finding.snippet}\n\n"
                 advisory_context += "Analyze this vulnerability context and synthesize a secure, minimal patch that prevents this exploit without breaking valid application data structures or custom loader handlers."

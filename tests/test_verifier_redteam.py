@@ -16,8 +16,6 @@ Acceptance:
 
 import pytest
 import shutil
-import tempfile
-import time
 from pathlib import Path
 
 from vulntrace.sandbox.runner import SubprocessSandboxRunner

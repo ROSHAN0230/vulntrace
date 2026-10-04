@@ -5,10 +5,9 @@ Includes cryptographic hashes (SHA-256) of harnesses and patches, full execution
 and strict secret sanitization.
 """
 
-import json
 import hashlib
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from vulntrace.models import VerificationPipelineResponse
 
 class EvidenceExporter:

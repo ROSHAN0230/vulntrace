@@ -6,7 +6,7 @@ high-assurance containment, and that operations enforce required capability boun
 """
 
 from enum import Enum
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from pydantic import BaseModel, Field
 
 from vulntrace.core.backend import BackendCapabilities, IsolationTier
@@ -103,8 +103,6 @@ class SecurityPolicyEngine:
         Enforces minimum capability policies for a specific lifecycle operation.
         """
         assurance = cls.evaluate_backend_assurance(capabilities)
-        missing_caps: List[str] = []
-        violations: List[str] = []
 
         # High-assurance requirement policy gate
         if require_high_assurance:

@@ -8,7 +8,6 @@ Verifies:
 """
 
 import pytest
-from pathlib import Path
 
 from vulntrace.core.backend import (
     IsolationTier,
@@ -17,7 +16,6 @@ from vulntrace.core.backend import (
 from vulntrace.core.policy import (
     ExecutionOperation,
     AssuranceLevel,
-    PolicyDecision,
     SecurityPolicyEngine
 )
 from vulntrace.core.local_backend import LocalSubprocessBackend

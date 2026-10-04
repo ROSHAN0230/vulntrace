@@ -6,7 +6,6 @@ NVIDIA Nemotron 3 Ultra understands surrounding module context, binds AppSafeLoa
 """
 
 import pytest
-import asyncio
 from pathlib import Path
 from vulntrace.sandbox.pipeline import VerificationPipeline
 from vulntrace.models import VerificationPipelineRequest

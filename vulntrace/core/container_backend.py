@@ -5,10 +5,8 @@ with kernel-level network denial (--network none), host filesystem hiding, cgrou
 and unforgeable parent-generated execution attestation.
 """
 
-import os
 import sys
 import time
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Callable

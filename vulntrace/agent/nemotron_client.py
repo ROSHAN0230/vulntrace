@@ -3,7 +3,7 @@ Nebius Token Factory Nemotron Client
 Performs live model inference against NVIDIA Nemotron models hosted on Nebius Token Factory.
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 import time
 import httpx
 from vulntrace.config import settings

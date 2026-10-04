@@ -261,7 +261,7 @@ Open your browser to:
 ```bash
 pytest -v tests/
 ```
-All 33 test cases should pass in ~18 seconds.
+All 108 test cases should pass cleanly.
 
 ---
 

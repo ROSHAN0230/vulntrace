@@ -47,7 +47,7 @@ async def test_ast_analyze_endpoint():
 @pytest.mark.asyncio
 async def test_evidence_export_endpoint():
     transport = ASGITransport(app=app)
-    sample_repo_path = str(Path(__file__).resolve().parent.parent / "sample_repo")
+    sample_repo_path = str(Path(__file__).resolve().parent / "fixtures" / "sample_repo")
     mock_run_data = {
         "cve_id": "CVE-2020-14343",
         "repo_path": sample_repo_path,

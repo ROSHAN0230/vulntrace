@@ -66,7 +66,9 @@ async def main():
     print("=" * 70)
     print(json.dumps(summary, indent=2))
     
-    Path("benchmark_results.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    output_path = Path(__file__).resolve().parent.parent / "docs" / "evidence" / "benchmark_results.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
 if __name__ == "__main__":
     asyncio.run(main())

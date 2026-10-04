@@ -7,7 +7,7 @@ Zero API key required; open public API.
 
 import time
 import httpx
-from typing import Optional, List
+from typing import List
 from vulntrace.models import (
     CveQueryResponse,
     AffectedPackage,

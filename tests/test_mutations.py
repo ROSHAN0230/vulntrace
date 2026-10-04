@@ -9,12 +9,9 @@ rather than static assumptions or hardcoded strings.
 import pytest
 import shutil
 import tempfile
-import asyncio
 from pathlib import Path
 from vulntrace.sandbox.pipeline import VerificationPipeline
 from vulntrace.models import VerificationPipelineRequest
-from vulntrace.analyzer.ast_visitor import AstReachabilityAnalyzer
-from vulntrace.models import AstAnalyzeRequest
 
 @pytest.fixture
 def temp_mutated_repo():

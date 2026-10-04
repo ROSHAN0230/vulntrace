@@ -9,16 +9,10 @@ Verifies:
 6. Benign setup.py builds execute cleanly and record parent-side attestation.
 """
 
-import os
-import sys
 import pytest
-from pathlib import Path
-import tempfile
-import shutil
 
 from vulntrace.core.backend import IsolationTier
 from vulntrace.core.container_backend import ContainerExecutionBackend
-from vulntrace.core.local_backend import LocalSubprocessBackend
 
 
 @pytest.fixture
