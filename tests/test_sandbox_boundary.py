@@ -138,6 +138,7 @@ while True:
         SubprocessSandboxRunner.cleanup_workspace(disposable_dir)
 
 
+@pytest.mark.windows
 def test_job_object_orphaned_detached_child_process_termination(temp_sandbox_env):
     """
     P0.5.2 Adversarial Test:

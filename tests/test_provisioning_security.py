@@ -14,6 +14,8 @@ import pytest
 from vulntrace.core.backend import IsolationTier
 from vulntrace.core.container_backend import ContainerExecutionBackend
 
+pytestmark = pytest.mark.container
+
 
 @pytest.fixture
 def container_backend():

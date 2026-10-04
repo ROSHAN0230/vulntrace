@@ -23,6 +23,8 @@ from vulntrace.sandbox.pipeline import VerificationPipeline
 BENCHMARK_DIR = Path(__file__).resolve().parent.parent / "benchmarks" / "contextual_reasoning"
 DEADCODE_DIR = Path(__file__).resolve().parent.parent / "benchmarks" / "unreachable_dead_code"
 
+pytestmark = pytest.mark.container
+
 
 @pytest.fixture(scope="module")
 def container_backend():

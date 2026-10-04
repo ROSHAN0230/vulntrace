@@ -30,6 +30,7 @@ class ContainerExecutionBackend(ExecutionBackend):
 
     IMAGE_NAME = "vulntrace-sandbox-base:latest"
     DEFAULT_TIMEOUT = 10.0
+    _cached_available: Optional[bool] = None
 
     def __init__(self, wsl_distro: Optional[str] = "Ubuntu"):
         self.wsl_distro = wsl_distro
@@ -47,15 +48,28 @@ class ContainerExecutionBackend(ExecutionBackend):
         return path_str
 
     def is_available(self) -> bool:
-        """Checks whether Podman is accessible in the environment."""
+        """Checks whether Podman is accessible in the environment and base sandbox image exists."""
         if self._is_available is not None:
+            return self._is_available
+        if ContainerExecutionBackend._cached_available is not None:
+            self._is_available = ContainerExecutionBackend._cached_available
             return self._is_available
 
         try:
-            cmd = self._build_cli_prefix() + ["podman", "--version"]
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-            self._is_available = (proc.returncode == 0)
+            cmd_ver = self._build_cli_prefix() + ["podman", "--version"]
+            proc_ver = subprocess.run(cmd_ver, capture_output=True, text=True, timeout=15)
+            if proc_ver.returncode != 0:
+                ContainerExecutionBackend._cached_available = False
+                self._is_available = False
+                return False
+
+            cmd_img = self._build_cli_prefix() + ["podman", "image", "exists", self.IMAGE_NAME]
+            proc_img = subprocess.run(cmd_img, capture_output=True, text=True, timeout=15)
+            available = (proc_img.returncode == 0)
+            ContainerExecutionBackend._cached_available = available
+            self._is_available = available
         except Exception:
+            ContainerExecutionBackend._cached_available = False
             self._is_available = False
 
         return self._is_available

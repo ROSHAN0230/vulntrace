@@ -14,23 +14,30 @@ against mandatory security guarantees:
 import time
 import pytest
 from pathlib import Path
-from typing import List
 
 from vulntrace.core.backend import ExecutionBackend, IsolationTier
 from vulntrace.core.local_backend import LocalSubprocessBackend
 from vulntrace.core.container_backend import ContainerExecutionBackend
 
 
-def get_available_backends() -> List[ExecutionBackend]:
+def get_available_backends():
     """Returns all backends available on the current machine."""
-    backends = [LocalSubprocessBackend()]
+    backends = [
+        pytest.param(LocalSubprocessBackend(), id="LOCAL_SUBPROCESS_FALLBACK")
+    ]
     container_backend = ContainerExecutionBackend()
     if container_backend.is_available():
-        backends.append(container_backend)
+        backends.append(
+            pytest.param(
+                container_backend,
+                id="OCI_CONTAINER_ISOLATED",
+                marks=pytest.mark.container
+            )
+        )
     return backends
 
 
-@pytest.mark.parametrize("backend", get_available_backends(), ids=lambda b: b.capabilities.tier.value)
+@pytest.mark.parametrize("backend", get_available_backends())
 class TestBackendConformanceSuite:
     """Verifies that each backend conforms to its declared security contract."""
 

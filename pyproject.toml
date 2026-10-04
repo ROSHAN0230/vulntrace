@@ -31,6 +31,11 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "container: tests requiring rootless OCI Podman container substrate and base image",
+    "windows: tests requiring Windows Win32 Job Object or platform-specific features",
+    "asyncio: marks tests as asyncio coroutines",
+]
 
 [tool.ruff]
 line-length = 120
