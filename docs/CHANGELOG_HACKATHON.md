@@ -12,7 +12,7 @@ All major project updates and milestones completed during the Nebius × NVIDIA G
 - **Truthful Failure Classification:** Mapped broken dependency installation to `ENV_BUILD_FAILED` with pip log excerpt, early-halting the verification pipeline before harness execution and preventing `UNEXPECTED_FAILURE` crashes.
 - **Real-Repo Evaluation (Flasgger RW-01):** Evaluated Flasgger commit `163a753` across 3 consecutive runs, achieving 100% identical verdicts (`INCONCLUSIVE` due to PyYAML 5.4 runtime constructor hardening on Python 3.10) with complete root-cause documentation.
 - **Harness & Engine Hardening:** Solved `SSLSocket` metaclass construction crash by implementing `_BlockedSocket(socket.socket)` subclass, added multi-parameter carrier wrapper in `HarnessSynthesizer`, and added pre-patch `GREEN_STATE_BLOCKED` truthful handling in `VerdictEngine`.
-- **Regression Suite:** Verified 147/147 tests pass in 212.30s; linter `ruff check vulntrace/ tests/` clean (0 errors).
+- **Regression Suite:** Verified 149/149 tests pass in 293.94s; linter `ruff check vulntrace/ tests/` clean (0 errors).
 
 ---
 

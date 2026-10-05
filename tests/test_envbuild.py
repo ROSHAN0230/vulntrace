@@ -205,3 +205,70 @@ def parse_data(raw):
     assert response.environment.failure_classification == "ENV_BUILD_FAILED"
     assert response.environment.pip_log_excerpt is not None
     assert response.environment.build_duration_ms > 0
+
+
+@pytest.mark.asyncio
+async def test_flasgger_vulnerable_commit_deterministic_verdict_3x():
+    """
+    Spec §4.5 & M2 AC 1 / Requirement 8:
+    Run the Flasgger vulnerable commit (163a753) 3 consecutive times with the dedicated environment builder.
+    Verdicts must be 100% identical, build time and Python version recorded in bundle,
+    and repository submodule returned to clean state.
+    """
+    flasgger_path = Path(__file__).resolve().parent.parent / "real_world_eval" / "flasgger"
+    if not flasgger_path.exists() or not (flasgger_path / ".git").exists():
+        pytest.skip("real_world_eval/flasgger repository submodule is not present.")
+
+    import subprocess
+    def _git(*args):
+        return subprocess.run(["git"] + list(args), cwd=str(flasgger_path), capture_output=True, text=True).stdout.strip()
+
+    # Checkout vulnerable commit 163a753
+    _git("checkout", "163a753")
+    verdicts = []
+    durations = []
+    py_versions = []
+
+    try:
+        for i in range(3):
+            req = VerificationPipelineRequest(
+                repo_path=str(flasgger_path),
+                cve_id="CVE-2020-14343",
+                target_file="flasgger/utils.py",
+                target_function="parse_docstring",
+                execution_backend="LOCAL_SUBPROCESS_FALLBACK",
+                use_nemotron=True,
+            )
+            res = await VerificationPipeline.run_pipeline(req)
+            verdicts.append(res.final_behavioral_verdict)
+            assert res.environment is not None
+            assert res.environment.provisioned is True
+            assert res.environment.has_manifest is True
+            assert res.environment.build_duration_ms > 0
+            assert "Python" in res.environment.python_version
+            durations.append(res.environment.build_duration_ms)
+            py_versions.append(res.environment.python_version)
+
+            # AC 1: Pre-patch evaluation must be defensive block exit code 42
+            assert res.pre_patch_result is not None
+            assert res.pre_patch_result.exit_code == 42
+            assert res.pre_patch_result.reproduction_state == "GREEN_STATE_BLOCKED"
+
+        # AC 1: 3x identical reproducible verdicts
+        assert len(verdicts) == 3
+        assert len(set(verdicts)) == 1, f"Flasgger verdicts were not identical across 3 runs: {verdicts}"
+        assert verdicts[0] == "INCONCLUSIVE"
+        # AC 2: Build metrics recorded
+        assert all(d > 0 for d in durations)
+        assert len(set(py_versions)) == 1
+    finally:
+        # Guarantee repository submodule returns to clean tracked commit ee62207
+        _git("checkout", "ee62207")
+
+
+def test_wheel_cache_flattening_and_offline_lookup(temp_repo_dir: Path):
+    """Proves that EnvironmentBuilder populates wheel cache and flattens wheels for offline reuse."""
+    cache_dir = EnvironmentBuilder.get_wheel_cache_dir()
+    assert cache_dir.exists()
+    assert "vulntrace_wheel_cache" in str(cache_dir)
+

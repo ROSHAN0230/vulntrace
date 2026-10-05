@@ -5,7 +5,7 @@
       "reachable_paths_identified": "2 of 4 cases (CASE-RW-01, CASE-RW-04)",
       "no_static_path_suppressions": "2 of 4 cases (CASE-RW-02, CASE-RW-03)",
       "behavioral_reproductions_attempted": "2 of 4 cases (CASE-RW-01, CASE-RW-04)",
-      "behavioral_reproductions_succeeded": "1 of 2 attempted cases (CASE-RW-04; CASE-RW-01 failed on external runtime dependency)",
+      "behavioral_reproductions_succeeded": "1 of 2 attempted cases (CASE-RW-04 reproduced; CASE-RW-01 inconclusive due to Python 3.10 / PyYAML 5.4 runtime blocking exploit constructor)",
       "patch_proposals_generated": "1 of 4 cases (CASE-RW-04)",
       "patches_accepted_by_ast_gate": "1 of 1 generated patches (CASE-RW-04)",
       "patches_rejected": "0 of 1 generated patches in real-world eval (tested separately in adversarial suite)",
@@ -19,7 +19,7 @@
     {
       "case_id": "CASE-RW-01",
       "repository": "https://github.com/flasgger/flasgger",
-      "commit_or_version": "163a753 (pre-ee62207 fix)",
+      "commit_or_version": "163a753 (163a753 pre-ee62207 fix)",
       "advisory_cve": "CVE-2020-14343 / CVE-2020-24395",
       "dependency_version": ">=3.0",
       "source_of_metadata": "OSV.dev + NVD + GitHub Advisory GHSA-8q59-q68h-6hv4",
@@ -31,18 +31,18 @@
         "details": "3 reachable call sites identified in flasgger/utils.py; 1 dead wrapper (parse_definition_docstring) flagged unreachable."
       },
       "verification_strategy": "Synthesize target harness for flasgger.utils.parse_docstring to detect arbitrary YAML deserialization.",
-      "behavioral_outcome": "UNEXPECTED_FAILURE",
+      "behavioral_outcome": "GREEN_STATE_BLOCKED",
       "remediation_proposal": "SKIPPED",
       "patch_validation": "SKIPPED",
-      "post_patch_behavioral_result": "UNEXPECTED_FAILURE",
-      "regression_result": "SKIPPED (child environment lacks optional runtime dependency 'jsonschema')",
-      "final_verdict": "UNEXPECTED_FAILURE",
-      "limitations": "Standalone subprocess runner lacks the complete set of optional Flask/jsonschema dependencies declared in setup.py, causing child import failure. The system truthfully terminates in UNEXPECTED_FAILURE rather than hallucinating success."
+      "post_patch_behavioral_result": "GREEN_STATE_BLOCKED",
+      "regression_result": "SKIPPED (Pre-patch verification inconclusive; remediation skipped)",
+      "final_verdict": "INCONCLUSIVE",
+      "limitations": "Pre-patch verification was inconclusive: the unpatched runtime or defensive guard already blocked the exploit probe, preventing reproduction of a red state in this environment."
     },
     {
       "case_id": "CASE-RW-02",
       "repository": "https://github.com/flasgger/flasgger",
-      "commit_or_version": "ee62207 (Scott Colby safe_load fix)",
+      "commit_or_version": "ee62207 (ee62207 Scott Colby safe_load fix)",
       "advisory_cve": "CVE-2020-14343",
       "dependency_version": "PyYAML",
       "source_of_metadata": "OSV.dev + GitHub commit ee62207d9671e848ab264900e7809a1dc0876964",
@@ -65,7 +65,7 @@
     {
       "case_id": "CASE-RW-03",
       "repository": "https://github.com/cookiecutter/cookiecutter",
-      "commit_or_version": "c88fbe9 (HEAD)",
+      "commit_or_version": "c88fbe9 (c88fbe9 HEAD)",
       "advisory_cve": "CVE-2020-14343",
       "dependency_version": "PyYAML >=5.3.1 (declared in pyproject.toml)",
       "source_of_metadata": "OSV.dev advisory GHSA-8q59-q68h-6hv4",
@@ -89,7 +89,7 @@
       "case_id": "CASE-RW-04",
       "category": "CASE A (Reachable -> Reproduced -> Remediated -> Verified -> Regressions Pass)",
       "repository": "Independent Microservice: repo_cloud_config",
-      "commit_or_version": "adc4c97 (Initial service commit)",
+      "commit_or_version": "dc5327f (Initial service commit)",
       "advisory_cve": "CVE-2020-14343",
       "dependency_version": "PyYAML ==5.3.1",
       "source_of_metadata": "OSV.dev + NVD",
@@ -111,12 +111,12 @@
         "changed_functions": [
           "yaml.load"
         ],
-        "additions_count": 2,
-        "deletions_count": 2,
-        "total_lines_changed": 4,
-        "diff_bytes": 451,
+        "additions_count": 4,
+        "deletions_count": 4,
+        "total_lines_changed": 8,
+        "diff_bytes": 804,
         "is_minimal": true,
-        "minimality_criterion": "Minimal: 4 lines across 1 file(s) (threshold: <= 10 lines, 1 file)",
+        "minimality_criterion": "Minimal: 8 lines across 1 file(s) (threshold: <= 10 lines, 1 file)",
         "tests_affected_count": 0,
         "reason_for_change": "Synthesized surgical remediation using Nemotron 3 Ultra."
       },

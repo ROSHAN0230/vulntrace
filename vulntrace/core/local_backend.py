@@ -29,6 +29,7 @@ class LocalSubprocessBackend(ExecutionBackend):
 
     def __init__(self):
         self._target_py_map: Dict[str, str] = {}
+        self._target_venv_map: Dict[str, str] = {}
 
     @property
     def capabilities(self) -> BackendCapabilities:
@@ -100,6 +101,8 @@ class LocalSubprocessBackend(ExecutionBackend):
                 on_log=on_log
             )
             self._target_py_map[str(workspace_path.resolve())] = env_res.python_executable
+            if env_res.venv_path:
+                self._target_venv_map[str(workspace_path.resolve())] = env_res.venv_path
             latency_ms = (time.perf_counter() - t0) * 1000.0
 
             exit_code = 0 if env_res.provisioned or not env_res.has_manifest else 1
@@ -218,11 +221,16 @@ class LocalSubprocessBackend(ExecutionBackend):
 
     async def cleanup_workspace(self, workspace_id: str) -> None:
         """
-        Destroys the disposable workspace.
+        Destroys the disposable workspace and cleans up associated case virtual environment.
         """
+        import os
         SubprocessSandboxRunner.cleanup_workspace(Path(workspace_id))
         workspace_key = str(Path(workspace_id).resolve())
         self._target_py_map.pop(workspace_key, None)
+        venv_path = self._target_venv_map.pop(workspace_key, None)
+        if venv_path and not os.environ.get("VULNTRACE_PRESERVE_CASE_ENVS"):
+            from vulntrace.envbuild import EnvironmentBuilder
+            EnvironmentBuilder.cleanup_case_environment(venv_path)
 
     def generate_attestation(self, workspace_id: str) -> ExecutionAttestation:
         """

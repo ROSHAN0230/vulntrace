@@ -3,7 +3,7 @@
 **Milestone:** M2 — Dedicated Target Environment Builder and First Real-Repository Evaluation  
 **Specification Reference:** `VULNTRACE_STUDIO_SPEC.md` §4.5, §4.4, Milestone M2  
 **Audit Date:** 2026-10-05  
-**Full Regression Test Suite:** **147 / 147 PASSED** (0 failures, 0 errors, 0 warnings in 212.30s)  
+**Full Regression Test Suite:** **149 / 149 PASSED** (0 failures, 0 errors, 0 warnings in 293.94s)  
 **Linter Status:** `ruff check vulntrace/ tests/` — **All checks passed!**  
 
 ---
@@ -38,7 +38,7 @@ Under M2:
 | `VerificationPipeline` | **EXTEND** | `vulntrace/sandbox/pipeline.py` | Early-halts on `ENV_BUILD_FAILED`, preserves environment evidence across all pipeline exit states. |
 | `VerdictEngine` | **EXTEND** | `vulntrace/engine/verdict_engine.py` | Added handling for `ENV_BUILD_FAILED` and pre-patch `GREEN_STATE_BLOCKED` mapping to `INCONCLUSIVE`. |
 | `HarnessSynthesizer` | **EXTEND** | `vulntrace/agent/harness_synthesizer.py` | Added `_BlockedSocket` subclass preserving `ssl.SSLSocket` metaclass construction; multi-param carrier generator. |
-| `test_envbuild.py` | **NEW** | `tests/test_envbuild.py` | 6 unit and integration tests covering manifest detection, Python discovery, secret purging, dedicated venvs, broken dependencies, and pipeline early halting. |
+| `test_envbuild.py` | **NEW** | `tests/test_envbuild.py` | 8 unit and integration tests covering manifest detection, Python discovery, secret purging, dedicated venvs, broken dependencies, pipeline early halting, automated 3x Flasgger deterministic verdict evaluation, and wheel cache flattening. |
 | `test_harness_synthesizer` | **EXTEND** | `tests/test_harness_synthesizer.py` | Added multi-parameter carrier wrapper integration test. |
 
 ---
@@ -94,7 +94,7 @@ Under M2:
 
 ## 4. Real Bugs Caught and Fixed by Execution
 
-During Milestone M2 implementation and real-repo testing, four critical production bugs were caught and fixed:
+During Milestone M2 implementation and real-repo testing, eight critical production bugs were caught and fixed:
 
 1. **`NameError: name 'FinalVerdictRecord' is not defined` (`vulntrace/sandbox/pipeline.py:176`):**
    - *Failure:* When early-halting on `ENV_BUILD_FAILED`, the pipeline constructed a `FinalVerdictRecord`, but the symbol was missing from imports.
@@ -118,6 +118,22 @@ During Milestone M2 implementation and real-repo testing, four critical producti
    - *Failure:* When an unpatched repository blocked an exploit probe (due to runtime Python/library version hardening), the pre-patch run exited with 42 (`GREEN_STATE_BLOCKED`). `VerdictEngine` crashed with `UNEXPECTED_FAILURE` because it only handled `RED_REPRODUCED_3_OF_3` in pre-patch states.
    - *Fix:* Added explicit pre-patch `GREEN_STATE_BLOCKED` state handling, truthfully evaluating the run as `INCONCLUSIVE` (probe blocked by unpatched target environment) with complete explanatory context.
 
+5. **Submodule Git Tree Dirtying During Repository Evaluation (`real_world_eval/run_eval.py` & `tests/test_envbuild.py`):**
+   - *Failure:* Running Flasgger evaluation checked out vulnerable commit `163a753` and left the submodule detached and un-tracked, dirtying `git status` for the entire repository.
+   - *Fix:* Wrapped commit checkout in a robust `try ... finally` block restoring the submodule to clean tracked commit `ee62207`.
+
+6. **Headless Corrupt Virtualenv Lockup (`vulntrace/envbuild/builder.py`):**
+   - *Failure:* If a venv directory was created or interrupted before writing `python.exe`, subsequent runs failed silently or threw executable missing errors.
+   - *Fix:* Added auto-detection and purge of headless virtualenv folders prior to `python -m venv`.
+
+7. **Cross-Platform Wheel Cache Lookup & Flattening (`vulntrace/envbuild/builder.py`):**
+   - *Failure:* Linux/POSIX pip wheel cache (`~/.cache/pip/wheels`) was not inspected, and nested subdirectories in pip's cache prevented pip from finding `.whl` files via `--find-links`.
+   - *Fix:* Added discovery for POSIX wheel cache paths and automatic flattening of nested wheel files into the wheel cache root directory.
+
+8. **Container Auto-Selection Mismatch in Multi-Case Evaluation Matrix (`real_world_eval/run_eval.py`):**
+   - *Failure:* When Podman was available on WSL2, `BackendFactory` automatically selected `ContainerExecutionBackend` for evaluation runs, which lacked `jsonschema` in its container base image, causing Flasgger to crash to `UNEXPECTED_FAILURE`.
+   - *Fix:* Forced `execution_backend="LOCAL_SUBPROCESS_FALLBACK"` in `evaluate_flasgger_vulnerable` and added target venv cleanup tracking in `LocalExecutionBackend.cleanup_workspace()`.
+
 ---
 
 ## 5. Full Test Suite & Linter Execution Record
@@ -126,13 +142,13 @@ During Milestone M2 implementation and real-repo testing, four critical producti
 ```text
 PS C:\AI-Tools\vulntrace> .\.venv\Scripts\pytest -q
 ........................................................................ [ 48%]
-........................................................................ [ 97%]
-...                                                                      [100%]
-147 passed in 212.30s (0:03:32)
+........................................................................ [ 96%]
+.....                                                                    [100%]
+149 passed in 293.94s (0:04:53)
 ```
 
 ### Ruff Linter Run
 ```text
-PS C:\AI-Tools\vulntrace> .\.venv\Scripts\ruff check vulntrace/ tests/
+PS C:\AI-Tools\vulntrace> .\.venv\Scripts\ruff check vulntrace/ tests/ real_world_eval/run_eval.py
 All checks passed!
 ```

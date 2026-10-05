@@ -17,7 +17,7 @@ Pursuant to **Phase 4B Section 3**, VulnTrace **does not invent a single ungroun
 - **Reachable Paths Identified:** `2 of 4 cases` (`CASE-RW-01` Flasgger, `CASE-RW-04` Cloud Config)
 - **No-Static-Path False Positive Suppressions:** `2 of 4 cases` (`CASE-RW-02` Flasgger patched, `CASE-RW-03` Cookiecutter)
 - **Behavioral Reproductions Attempted:** `2 of 4 cases` (`CASE-RW-01`, `CASE-RW-04`)
-- **Behavioral Reproductions Succeeded:** `1 of 2 attempted cases` (`CASE-RW-04` reproduced; `CASE-RW-01` halted with `UNEXPECTED_FAILURE` due to missing external runtime dependency `jsonschema`)
+- **Behavioral Reproductions Succeeded:** `1 of 2 attempted cases` (`CASE-RW-04` reproduced; `CASE-RW-01` resolved dependencies via EnvironmentBuilder but halted with `INCONCLUSIVE` as Python 3.10 / PyYAML 5.4 blocks constructor before execution)
 - **Patch Proposals Generated:** `1 of 4 cases` (`CASE-RW-04` via NVIDIA Nemotron 3 Ultra)
 - **Patches Accepted by AST Syntax & Diff Gates:** `1 of 1 generated patches` (`CASE-RW-04`)
 - **Patches Rejected:** `0 of 1 generated patches in real-world suite` (Adversarial rejection proven in unit suite: 1 syntax error, 1 empty diff)
@@ -41,13 +41,13 @@ Pursuant to **Phase 4B Section 3**, VulnTrace **does not invent a single ungroun
 | **6. Repository Structure**| 51 Python files, 205 functions | 51 Python files, 205 functions | 90 Python files, 453 functions | 4 Python files, 6 functions, 4 pytests |
 | **7. Reachability Analysis**| `REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED` | `NO_VULNERABILITIES_FOUND` | `NO_VULNERABILITIES_FOUND` | `REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED` |
 | **8. Verification Strategy**| Synthesize target harness for `flasgger.utils.parse_docstring` | Suppressed by pre-execution reachability guard | Suppressed by pre-execution reachability guard | Synthesize target harness for `yaml_adapter.parse_cloud_descriptor` |
-| **9. Behavioral Outcome** | `UNEXPECTED_FAILURE` (missing `jsonschema`)| `SUPPRESSED_BY_GUARD` | `SUPPRESSED_FALSE_POSITIVE` | `RED_STATE_REPRODUCED` (Exit 0) |
+| **9. Behavioral Outcome** | `GREEN_STATE_BLOCKED` (ConstructorError blocked, exit 42) | `SUPPRESSED_BY_GUARD` | `SUPPRESSED_FALSE_POSITIVE` | `RED_STATE_REPRODUCED` (Exit 0) |
 | **10. Remediation Proposal**| `SKIPPED` | `SKIPPED` (Already safe) | `SKIPPED` (Code is already safe) | `NVIDIA_NEMOTRON_3_ULTRA` (surgical patch) |
 | **11. Patch Validation** | `SKIPPED` | `SKIPPED` | `SKIPPED` | `ACCEPTED` (Passed AST syntax & diff gate) |
-| **12. Post-Patch Behavior**| `UNEXPECTED_FAILURE` | `SKIPPED` | `SKIPPED` | `GREEN_STATE_BLOCKED` (Exit 42, parent verified) |
-| **13. Regression Result** | `SKIPPED` | `NOT_REQUIRED` | `NOT_REQUIRED` | `PASSED` (4/4 pytests passed cleanly) |
-| **14. Final Verdict** | `UNEXPECTED_FAILURE` | `NO_VULNERABILITIES_FOUND` | `UNREACHABLE_FALSE_POSITIVE` | **`GREEN_STATE_VERIFIED`** |
-| **15. Disclosed Limitations**| Requires target repository runtime dependencies installed in environment. | Static analysis proves absence of symbol only. | Static AST does not resolve dynamic plugin hooks. | Verification proves defense against evaluated exploit payload in local sandbox. |
+| **12. Post-Patch Behavior**| `GREEN_STATE_BLOCKED` | `SKIPPED` | `SKIPPED` | `GREEN_STATE_BLOCKED` (Exit 42, parent verified) |
+| **13. Regression Result** | `SKIPPED (Pre-patch inconclusive)` | `NOT_REQUIRED` | `NOT_REQUIRED` | `PASSED` (4/4 pytests passed cleanly) |
+| **14. Final Verdict** | `INCONCLUSIVE` | `NO_VULNERABILITIES_FOUND` | `UNREACHABLE_FALSE_POSITIVE` | **`GREEN_STATE_VERIFIED`** |
+| **15. Disclosed Limitations**| Dedicated venv built with PyYAML 5.4.1 runtime on Python 3.10; exploit constructor blocked before code execution. | Static analysis proves absence of symbol only. | Static AST does not resolve dynamic plugin hooks. | Verification proves defense against evaluated exploit payload in local sandbox. |
 
 ---
 

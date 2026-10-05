@@ -68,6 +68,33 @@ class EnvironmentBuilder:
                             shutil.copy2(whl, target_whl)
                         except Exception:
                             pass
+        # POSIX / Linux pip cache (~/.cache/pip/wheels)
+        try:
+            posix_cache = Path.home() / ".cache" / "pip" / "wheels"
+            if posix_cache.exists():
+                for whl in posix_cache.rglob("*.whl"):
+                    target_whl = cache_dir / whl.name
+                    if not target_whl.exists():
+                        try:
+                            shutil.copy2(whl, target_whl)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+        # Flatten any wheels present in subdirectories of cache_dir
+        try:
+            for whl in cache_dir.rglob("*.whl"):
+                if whl.parent != cache_dir:
+                    target_whl = cache_dir / whl.name
+                    if not target_whl.exists():
+                        try:
+                            shutil.copy2(whl, target_whl)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
         return cache_dir
 
     @classmethod
@@ -201,6 +228,7 @@ class EnvironmentBuilder:
             "PATH": os.environ.get("PATH", ""),
             "TEMP": str(scratch_dir),
             "TMP": str(scratch_dir),
+            "TMPDIR": str(scratch_dir),
             "USERPROFILE": str(scratch_dir),
             "HOME": str(scratch_dir),
             "APPDATA": str(appdata_dir),
@@ -300,6 +328,9 @@ class EnvironmentBuilder:
             # 1. Create virtual environment
             if on_log:
                 on_log(f"Creating dedicated virtualenv outside workspace at: {target_venv_dir}")
+
+            if target_venv_dir.exists() and not target_py.exists():
+                shutil.rmtree(target_venv_dir, ignore_errors=True)
 
             venv_cmd = [base_py, "-m", "venv", str(target_venv_dir)]
             venv_proc = subprocess.run(
@@ -412,6 +443,16 @@ class EnvironmentBuilder:
                     failure_reason=f"pip install exited {pip_proc.returncode}: {excerpt[:200]}",
                     notes="Target dependency installation failed. Truthfully reported as ENV_BUILD_FAILED."
                 )
+
+            # Ensure newly cached wheels are available in wheel cache root for offline find-links
+            try:
+                for whl in wheel_cache.rglob("*.whl"):
+                    if whl.parent != wheel_cache:
+                        dest = wheel_cache / whl.name
+                        if not dest.exists():
+                            shutil.copy2(whl, dest)
+            except Exception:
+                pass
 
             if on_log:
                 on_log(f"Target environment provisioned in {round(dt, 2)}ms ({target_py_version}). Network locked.")
