@@ -180,6 +180,15 @@ class EnvironmentBuilder:
                 p = shutil.which(bin_name)
                 if p:
                     candidates.append(Path(p))
+            # Also search hostedtoolcache (e.g., GitHub Actions Ubuntu runner)
+            toolcache = Path("/opt/hostedtoolcache/Python")
+            if toolcache.exists():
+                for p in sorted(toolcache.glob("3.10*/x64/bin/python"), reverse=True):
+                    if p.exists():
+                        candidates.append(p)
+                for p in sorted(toolcache.glob("3.11*/x64/bin/python"), reverse=True):
+                    if p.exists():
+                        candidates.append(p)
 
         # Always include running interpreter as candidate
         candidates.append(Path(sys.base_prefix) / ("python.exe" if sys.platform == "win32" else "bin/python3"))
@@ -188,10 +197,14 @@ class EnvironmentBuilder:
         # Filter to existing interpreters
         valid_candidates = [c for c in candidates if c.exists()]
 
-        # If repo hints older Python (e.g., 2.7, 3.6, <=3.11), prefer Python 3.10 or 3.11
+        # If repo hints older Python (e.g., 2.7, 3.6, <=3.11), prefer Python 3.10 first, then 3.11
         if any(h in target_version_hint for h in ["2.7", "3.6", "3.7", "3.8", "3.9", "3.10", "3.11"]):
             for c in valid_candidates:
-                if any(tag in str(c).lower() for tag in ["python310", "python3.10", "python311", "python3.11"]):
+                if any(tag in str(c).lower() for tag in ["python310", "python3.10"]):
+                    ver_str = cls._query_python_version(str(c))
+                    return str(c), ver_str
+            for c in valid_candidates:
+                if any(tag in str(c).lower() for tag in ["python311", "python3.11"]):
                     ver_str = cls._query_python_version(str(c))
                     return str(c), ver_str
 

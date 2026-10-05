@@ -11,8 +11,8 @@ All major project updates and milestones completed during the Nebius × NVIDIA G
 - **Environment Evidence (Spec §4.11):** Added `EnvironmentEvidence` Pydantic model recording target Python version, exact executable path, build duration (ms), installed package inventory, pip log excerpts, and wheel cache hit metrics.
 - **Truthful Failure Classification:** Mapped broken dependency installation to `ENV_BUILD_FAILED` with pip log excerpt, early-halting the verification pipeline before harness execution and preventing `UNEXPECTED_FAILURE` crashes.
 - **Real-Repo Evaluation (Flasgger RW-01):** Evaluated Flasgger commit `163a753` across 3 consecutive runs, achieving 100% identical verdicts (`INCONCLUSIVE` due to PyYAML 5.4 runtime constructor hardening on Python 3.10) with complete root-cause documentation.
-- **Harness & Engine Hardening:** Solved `SSLSocket` metaclass construction crash by implementing `_BlockedSocket(socket.socket)` subclass, added multi-parameter carrier wrapper in `HarnessSynthesizer`, and added pre-patch `GREEN_STATE_BLOCKED` truthful handling in `VerdictEngine`.
-- **Regression Suite:** Verified 149/149 tests pass in 293.94s; linter `ruff check vulntrace/ tests/` clean (0 errors).
+- **Harness & Engine Hardening:** Solved `SSLSocket` metaclass construction crash by implementing `_BlockedSocket(socket.socket)` subclass, added multi-parameter carrier wrapper in `HarnessSynthesizer`, added pre-patch `GREEN_STATE_BLOCKED` truthful handling in `VerdictEngine`, and configured multi-runtime Python resolution (3.10 + 3.11) with `/opt/hostedtoolcache/Python` discovery for legacy library compatibility.
+- **Regression Suite & CI:** Verified 149/149 tests pass locally in 293.94s; linter `ruff check vulntrace/ tests/` clean (0 errors); GitHub Actions CI green.
 
 ---
 

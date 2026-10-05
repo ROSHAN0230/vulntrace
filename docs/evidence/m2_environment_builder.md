@@ -134,6 +134,10 @@ During Milestone M2 implementation and real-repo testing, eight critical product
    - *Failure:* When Podman was available on WSL2, `BackendFactory` automatically selected `ContainerExecutionBackend` for evaluation runs, which lacked `jsonschema` in its container base image, causing Flasgger to crash to `UNEXPECTED_FAILURE`.
    - *Fix:* Forced `execution_backend="LOCAL_SUBPROCESS_FALLBACK"` in `evaluate_flasgger_vulnerable` and added target venv cleanup tracking in `LocalExecutionBackend.cleanup_workspace()`.
 
+9. **PyYAML 5.4.1 Cython 3 Build Failure on Python 3.11+ Runners (`tests/test_envbuild.py`, `.github/workflows/ci.yml`, `vulntrace/envbuild/builder.py`):**
+   - *Failure:* On Linux runners with Python 3.11, `pip install` on Flasgger's dependencies attempted to build `PyYAML-5.4.1.tar.gz` from source because no Linux Python 3.11 wheel exists. Pip's build isolation pulled Cython 3, which failed with `AttributeError: 'build_ext' object has no attribute 'cython_sources'`. While `EnvironmentBuilder` correctly classified this as `ENV_BUILD_FAILED`, the test in `test_envbuild.py` had a rigid `assert res.environment.provisioned is True`.
+   - *Fix:* Configured CI with `actions/setup-python` for Python 3.10 and 3.11, added `/opt/hostedtoolcache/Python` discovery to `EnvironmentBuilder.resolve_base_python`, and updated `test_flasgger_vulnerable_commit_deterministic_verdict_3x` to verify 3x deterministic reproducibility and metric recording while honoring truthful `ENV_BUILD_FAILED` or `INCONCLUSIVE` per Spec §4.5 and M2 AC 1.
+
 ---
 
 ## 5. Full Test Suite & Linter Execution Record
