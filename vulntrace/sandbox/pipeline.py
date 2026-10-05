@@ -29,7 +29,9 @@ from vulntrace.models import (
     BehaviorEvidence,
     PatchEvidence,
     RegressionEvidence,
-    ExecutionEvidence
+    ExecutionEvidence,
+    EnvironmentEvidence,
+    FinalVerdictRecord
 )
 from vulntrace.sandbox.runner import SubprocessSandboxRunner
 from vulntrace.sandbox.target_env import TargetEnvironmentManager
@@ -109,8 +111,115 @@ class VerificationPipeline:
             manifest_dependencies=detected_deps,
             on_log=lambda msg: emit("LOG", "SETUP", msg)
         )
+        prov_evidence = prov_result.structured_evidence or {}
+        env_evidence = EnvironmentEvidence(
+            has_manifest=has_manifest,
+            detected_dependencies=prov_evidence.get("detected_dependencies", detected_deps),
+            provisioned=(prov_result.exit_code == 0),
+            python_version=prov_evidence.get("python_version", ""),
+            python_executable=prov_evidence.get("python_executable", ""),
+            venv_path=prov_evidence.get("venv_path"),
+            wheel_cache_dir=prov_evidence.get("wheel_cache_dir"),
+            build_duration_ms=prov_result.latency_ms,
+            build_output=prov_evidence.get("build_output", prov_result.stdout),
+            pip_log_excerpt=prov_evidence.get("pip_log_excerpt", prov_result.stderr[:500] if prov_result.stderr else None),
+            failure_classification=prov_evidence.get("failure_classification", "ENV_BUILD_FAILED" if (has_manifest and prov_result.exit_code != 0) else None),
+            failure_reason=prov_evidence.get("failure_reason", prov_result.stderr[:200] if prov_result.stderr else None),
+            network_isolated=prov_evidence.get("network_isolated", True),
+            notes=prov_result.validation_notes or ("Target environment provisioned" if prov_result.exit_code == 0 else "Environment build failed")
+        )
+
+        if has_manifest and prov_result.exit_code != 0:
+            fail_reason = env_evidence.failure_reason or env_evidence.pip_log_excerpt or prov_result.stderr or "Target environment build failed"
+            emit("ERROR", "SETUP", f"Target environment construction failed: {fail_reason[:150]}")
+            dt_total = (time.perf_counter() - t0) * 1000.0
+            emit("STATE_TRANSITION", "VERDICT", f"FINAL BEHAVIORAL VERDICT: ENV_BUILD_FAILED (Total: {round(dt_total, 2)}ms)")
+
+            fail_harness = HarnessGenerateResponse(
+                cve_id=req.cve_id,
+                target_file=req.target_file or "unknown.py",
+                function_name=req.target_function or "unknown",
+                harness_code="# Harness synthesis skipped: environment build failed",
+                sentinel_filename="none",
+                latency_ms=0.0
+            )
+            fail_sandbox = SandboxExecutionResult(
+                exit_code=1,
+                stdout=prov_result.stdout,
+                stderr=prov_result.stderr,
+                latency_ms=prov_result.latency_ms,
+                sentinel_created=False,
+                reproduction_state="ENV_BUILD_FAILED",
+                parent_validated=False,
+                validation_notes=f"Target environment construction failed: {fail_reason[:150]}",
+                sandbox_engine=backend.capabilities.tier.value,
+                disposable_dir=str(disposable_dir),
+                error=fail_reason
+            )
+            empty_rem = RemediationResponse(
+                cve_id=req.cve_id,
+                target_file=req.target_file or "unknown.py",
+                engine="SKIPPED",
+                diff="",
+                explanation="Skipped remediation: Environment construction failed.",
+                latency_ms=0.0,
+                success=False,
+                validation_status="SKIPPED"
+            )
+            empty_reg = {
+                "executed": False,
+                "passed": False,
+                "test_count": 0,
+                "latency_ms": 0.0,
+                "error": "Regression tests skipped: environment construction failed"
+            }
+
+            verdict_rec = FinalVerdictRecord(
+                terminal_state="ENV_BUILD_FAILED",
+                cve_id=req.cve_id,
+                repo_path=str(source_repo),
+                reason=f"Target repository environment could not be built: {fail_reason}",
+                timestamp=time.time(),
+                evidence_summary={
+                    "cve_id": req.cve_id,
+                    "repo": str(source_repo),
+                    "reachability_verdict": "NOT_EVALUATED",
+                    "pre_patch_state": "ENV_BUILD_FAILED",
+                    "sandbox_engine": backend.capabilities.tier.value,
+                    "target_python_version": env_evidence.python_version,
+                    "environment_build_duration_ms": env_evidence.build_duration_ms,
+                    "pip_log_excerpt": env_evidence.pip_log_excerpt,
+                    "failure_classification": "ENV_BUILD_FAILED"
+                },
+                is_safe_claim=False
+            )
+
+            return VerificationPipelineResponse(
+                cve_id=req.cve_id,
+                repo_path=str(source_repo),
+                reachability_verdict="NOT_EVALUATED",
+                harness=fail_harness,
+                pre_patch_result=fail_sandbox,
+                remediation=empty_rem,
+                post_patch_result=fail_sandbox,
+                regression_tests=empty_reg,
+                final_behavioral_verdict="ENV_BUILD_FAILED",
+                structured_evidence={
+                    "environment": env_evidence.model_dump(),
+                    "failure_classification": "ENV_BUILD_FAILED"
+                },
+                verdict_record=verdict_rec,
+                environment=env_evidence,
+                sandbox_engine=backend.capabilities.tier.value,
+                cloud_status="PERMISSION_DENIED (HTTP 403)",
+                total_pipeline_ms=round(dt_total, 2),
+                isolation_tier=backend.capabilities.tier.value,
+                assurance_level=assurance_level.value,
+                policy_decision=policy_decision.model_dump()
+            )
+
         if prov_result.exit_code == 0:
-            emit("STAGE_COMPLETE", "SETUP", f"Target environment provisioned on backend ({backend.capabilities.tier.value}) in {prov_result.latency_ms}ms. Network isolation active.")
+            emit("STAGE_COMPLETE", "SETUP", f"Target environment provisioned on backend ({backend.capabilities.tier.value}) in {prov_result.latency_ms}ms ({env_evidence.python_version}). Network isolation active.")
         else:
             emit("LOG", "SETUP", f"Target environment: {prov_result.validation_notes or 'standard environment'}")
 
@@ -195,7 +304,10 @@ class VerificationPipeline:
                 disposable_dir=str(disposable_dir),
                 isolation_tier=backend.capabilities.tier.value,
                 capabilities=backend.capabilities.model_dump(),
-                attestation=attestation.model_dump()
+                attestation=attestation.model_dump(),
+                target_python_version=env_evidence.python_version,
+                environment_build_duration_ms=env_evidence.build_duration_ms,
+                environment_evidence=env_evidence.model_dump()
             )
 
             # Check if target is unreachable dead code (False positive suppression)
@@ -285,6 +397,7 @@ class VerificationPipeline:
                     final_behavioral_verdict=verdict_rec.terminal_state,
                     structured_evidence={"reachability": "UNREACHABLE_FALSE_POSITIVE", "dead_code_count": ast_res.unreachable_dead_code_count},
                     verdict_record=verdict_rec,
+                    environment=env_evidence,
                     sandbox_engine=backend.capabilities.tier.value,
                     cloud_status="PERMISSION_DENIED (HTTP 403)",
                     total_pipeline_ms=round(dt_total, 2),
@@ -428,6 +541,7 @@ class VerificationPipeline:
                     final_behavioral_verdict=verdict_rec.terminal_state,
                     structured_evidence=pre_res.structured_evidence,
                     verdict_record=verdict_rec,
+                    environment=env_evidence,
                     sandbox_engine=backend.capabilities.tier.value,
                     cloud_status="PERMISSION_DENIED (HTTP 403)",
                     total_pipeline_ms=round(dt_total, 2),
@@ -634,6 +748,7 @@ class VerificationPipeline:
                     "validation_status": remediation_res.validation_status
                 }
 
+            pipeline_evidence["environment"] = env_evidence.model_dump()
             return VerificationPipelineResponse(
                 cve_id=req.cve_id,
                 repo_path=str(source_repo),
@@ -646,6 +761,7 @@ class VerificationPipeline:
                 final_behavioral_verdict=final_verdict,
                 structured_evidence=pipeline_evidence,
                 verdict_record=verdict_record,
+                environment=env_evidence,
                 sandbox_engine=backend.capabilities.tier.value,
                 cloud_status="PERMISSION_DENIED (HTTP 403)",
                 total_pipeline_ms=round(dt_total, 2),

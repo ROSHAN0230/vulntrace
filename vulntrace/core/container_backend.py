@@ -225,7 +225,11 @@ class ContainerExecutionBackend(ExecutionBackend):
                 "image": self.IMAGE_NAME,
                 "network_isolated": True,
                 "setup_executed_in_container": setup_executed,
-                "setup_latency_ms": round(latency_ms, 2)
+                "setup_latency_ms": round(latency_ms, 2),
+                "build_duration_ms": round(latency_ms, 2),
+                "python_version": "Python 3.11 (OCI Container)",
+                "failure_classification": "ENV_BUILD_FAILED" if exit_code != 0 else None,
+                "pip_log_excerpt": stderr if exit_code != 0 else None,
             },
             attestation=attestation,
             error=stderr if exit_code != 0 else None

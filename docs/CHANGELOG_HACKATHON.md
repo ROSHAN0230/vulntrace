@@ -4,6 +4,18 @@ All major project updates and milestones completed during the Nebius × NVIDIA G
 
 ---
 
+## [M2] Dedicated Target Environment Builder & Real-Repo Evaluation — 2026-10-05
+- **Dedicated Per-Case Environment Builder (Spec §4.5):** Implemented `vulntrace/envbuild/` with `EnvironmentBuilder` for provisioning isolated virtual environments per evaluation case strictly outside the workspace directory (`%TEMP%/vulntrace_case_envs/`).
+- **Static Manifest Discovery:** Added dependency extraction across `requirements.txt`, `pyproject.toml`, and `setup.py` without code execution.
+- **Wheel Caching & Offline Enforcement:** Provisioned shared wheel cache (`%TEMP%/vulntrace_wheel_cache/`) and enforced offline execution during harness runs.
+- **Environment Evidence (Spec §4.11):** Added `EnvironmentEvidence` Pydantic model recording target Python version, exact executable path, build duration (ms), installed package inventory, pip log excerpts, and wheel cache hit metrics.
+- **Truthful Failure Classification:** Mapped broken dependency installation to `ENV_BUILD_FAILED` with pip log excerpt, early-halting the verification pipeline before harness execution and preventing `UNEXPECTED_FAILURE` crashes.
+- **Real-Repo Evaluation (Flasgger RW-01):** Evaluated Flasgger commit `163a753` across 3 consecutive runs, achieving 100% identical verdicts (`INCONCLUSIVE` due to PyYAML 5.4 runtime constructor hardening on Python 3.10) with complete root-cause documentation.
+- **Harness & Engine Hardening:** Solved `SSLSocket` metaclass construction crash by implementing `_BlockedSocket(socket.socket)` subclass, added multi-parameter carrier wrapper in `HarnessSynthesizer`, and added pre-patch `GREEN_STATE_BLOCKED` truthful handling in `VerdictEngine`.
+- **Regression Suite:** Verified 147/147 tests pass in 212.30s; linter `ruff check vulntrace/ tests/` clean (0 errors).
+
+---
+
 ## [M1] Verifier Hardening + Deserialization Oracle — 2026-10-05
 - **Sink-Class Oracle Library (Spec §4.3):** Implemented `vulntrace/sinks/` package with reviewed oracles (`YamlDeserializationOracle`, `PickleDeserializationOracle`, `DeserializationSinkOracle`, and `SinkOracleRegistry`). Covers unsafe `yaml.load`/loaders, `pickle.loads`, behavioral probes (canary in workspace), expected exception signatures, safe patterns, and positive control contracts.
 - **Anti-Gaming Verifier (Spec §4.4):** Implemented `vulntrace/verifier/` package with `AntiGamingVerifier`, `PatchDenylistValidator`, and `IntegrityAuditor`. Enforces RED 3/3 replication, SHA-256 integrity of harness and test files outside patched tree, AST patch denylist (rejects `sys.exit`, `os._exit`, `os.kill`, broad `except: pass`, target function deletion, empty diff), GREEN 3/3 flake check, and anti-spoofing guard against bare exit 42.

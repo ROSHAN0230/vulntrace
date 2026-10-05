@@ -155,7 +155,7 @@ class SandboxExecutionResult(BaseModel):
     stderr: str
     latency_ms: float
     sentinel_created: bool
-    reproduction_state: str  # "RED_STATE_REPRODUCED", "GREEN_STATE_BLOCKED", "INCONCLUSIVE", "TIMED_OUT", "ERROR", "UNEXPECTED_FAILURE", "VERIFICATION_REJECTED"
+    reproduction_state: str  # "RED_STATE_REPRODUCED", "GREEN_STATE_BLOCKED", "INCONCLUSIVE", "TIMED_OUT", "ERROR", "UNEXPECTED_FAILURE", "VERIFICATION_REJECTED", "ENV_BUILD_FAILED"
     assertion_result: Optional[str] = None
     exception_type: Optional[str] = None
     structured_evidence: Optional[Dict[str, Any]] = None
@@ -258,7 +258,7 @@ class ReachabilityEvidence(BaseModel):
 class BehaviorEvidence(BaseModel):
     pre_patch_exit_code: int
     pre_patch_sentinel_observed: bool
-    pre_patch_state: str  # "RED_STATE_REPRODUCED", "INCONCLUSIVE", "UNEXPECTED_FAILURE", "VERIFICATION_REJECTED"
+    pre_patch_state: str  # "RED_STATE_REPRODUCED", "INCONCLUSIVE", "UNEXPECTED_FAILURE", "VERIFICATION_REJECTED", "ENV_BUILD_FAILED"
     pre_patch_assertion: Optional[str] = None
     post_patch_exit_code: int
     post_patch_sentinel_observed: bool
@@ -285,6 +285,22 @@ class RegressionEvidence(BaseModel):
     latency_ms: float
     error: Optional[str] = None
 
+class EnvironmentEvidence(BaseModel):
+    has_manifest: bool = False
+    detected_dependencies: List[str] = Field(default_factory=list)
+    provisioned: bool = False
+    python_version: str = ""
+    python_executable: str = ""
+    venv_path: Optional[str] = None
+    wheel_cache_dir: Optional[str] = None
+    build_duration_ms: float = 0.0
+    build_output: Optional[str] = None
+    pip_log_excerpt: Optional[str] = None
+    failure_classification: Optional[str] = None  # "ENV_BUILD_FAILED"
+    failure_reason: Optional[str] = None
+    network_isolated: bool = True
+    notes: str = ""
+
 class ExecutionEvidence(BaseModel):
     sandbox_engine: str   # "LOCAL_SUBPROCESS_FALLBACK", "OCI_CONTAINER_ISOLATED"
     cloud_status: str     # "PERMISSION_DENIED (HTTP 403)"
@@ -295,13 +311,16 @@ class ExecutionEvidence(BaseModel):
     isolation_tier: Optional[str] = "LOCAL_SUBPROCESS_FALLBACK"
     capabilities: Optional[Dict[str, Any]] = None
     attestation: Optional[Dict[str, Any]] = None
+    target_python_version: Optional[str] = None
+    environment_build_duration_ms: Optional[float] = None
+    environment_evidence: Optional[Dict[str, Any]] = None
     isolation_limits: Dict[str, str] = Field(default_factory=lambda: {
         "isolated": "disposable directory copy, purged credentials/secrets, timeout watchdog, process-tree termination",
         "unisolated": "shared host OS kernel, host localhost loopback"
     })
 
 class FinalVerdictRecord(BaseModel):
-    terminal_state: str  # "GREEN_STATE_VERIFIED", "UNREACHABLE_FALSE_POSITIVE", "INCONCLUSIVE", "PATCH_REJECTED", "REGRESSION_FAILURE", "UNEXPECTED_FAILURE", "VERIFICATION_REJECTED"
+    terminal_state: str  # "GREEN_STATE_VERIFIED", "UNREACHABLE_FALSE_POSITIVE", "INCONCLUSIVE", "PATCH_REJECTED", "REGRESSION_FAILURE", "UNEXPECTED_FAILURE", "VERIFICATION_REJECTED", "ENV_BUILD_FAILED"
     cve_id: str
     repo_path: str
     reason: str
@@ -319,15 +338,16 @@ class FinalVerdictRecord(BaseModel):
 class VerificationPipelineResponse(BaseModel):
     cve_id: str
     repo_path: str
-    reachability_verdict: str  # "REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED", "UNREACHABLE_FALSE_POSITIVE"
+    reachability_verdict: str  # "REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED", "UNREACHABLE_FALSE_POSITIVE", "NOT_EVALUATED"
     harness: HarnessGenerateResponse
     pre_patch_result: SandboxExecutionResult   # RED STATE
     remediation: RemediationResponse
     post_patch_result: SandboxExecutionResult  # GREEN STATE
     regression_tests: Dict[str, Any]           # pytest results
-    final_behavioral_verdict: str              # "GREEN_STATE_VERIFIED", "RED_STATE_PERSISTS", "REGRESSION_FAILURE", "INCONCLUSIVE", "PATCH_REJECTED", "UNREACHABLE_FALSE_POSITIVE", "UNEXPECTED_FAILURE", "VERIFICATION_REJECTED"
+    final_behavioral_verdict: str              # "GREEN_STATE_VERIFIED", "RED_STATE_PERSISTS", "REGRESSION_FAILURE", "INCONCLUSIVE", "PATCH_REJECTED", "UNREACHABLE_FALSE_POSITIVE", "UNEXPECTED_FAILURE", "VERIFICATION_REJECTED", "ENV_BUILD_FAILED"
     structured_evidence: Optional[Dict[str, Any]] = None
     verdict_record: Optional[FinalVerdictRecord] = None
+    environment: Optional[EnvironmentEvidence] = None
     sandbox_engine: str                        # "LOCAL_SUBPROCESS_FALLBACK", "OCI_CONTAINER_ISOLATED"
     cloud_status: str                          # "PERMISSION_DENIED (HTTP 403)"
     total_pipeline_ms: float

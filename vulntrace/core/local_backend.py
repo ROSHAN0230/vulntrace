@@ -18,7 +18,6 @@ from vulntrace.core.backend import (
     ExecutionCommandResult
 )
 from vulntrace.sandbox.runner import SubprocessSandboxRunner
-from vulntrace.sandbox.target_env import TargetEnvironmentManager
 
 
 class LocalSubprocessBackend(ExecutionBackend):
@@ -87,36 +86,47 @@ class LocalSubprocessBackend(ExecutionBackend):
         on_log: Optional[Callable[[str], None]] = None
     ) -> ExecutionCommandResult:
         """
-        Provisions dependencies inside the disposable workspace using TargetEnvironmentManager.
+        Provisions dependencies inside a dedicated environment using EnvironmentBuilder (Spec §4.5).
         """
         t0 = time.perf_counter()
         workspace_path = Path(workspace_id)
 
         try:
-            target_env = TargetEnvironmentManager.provision_target_environment(
-                disposable_dir=workspace_path,
+            from vulntrace.envbuild import EnvironmentBuilder
+            env_res = EnvironmentBuilder.build_environment(
+                repo_dir=workspace_path,
+                workspace_id=workspace_id,
+                timeout=timeout,
                 on_log=on_log
             )
-            self._target_py_map[str(workspace_path.resolve())] = target_env.python_executable
+            self._target_py_map[str(workspace_path.resolve())] = env_res.python_executable
             latency_ms = (time.perf_counter() - t0) * 1000.0
 
-            exit_code = 0 if target_env.provisioned or not target_env.has_manifest else 1
+            exit_code = 0 if env_res.provisioned or not env_res.has_manifest else 1
             attestation = self.generate_attestation(workspace_id)
 
             return ExecutionCommandResult(
                 exit_code=exit_code,
-                stdout=f"Dependencies provisioned: {len(target_env.detected_dependencies)} packages detected.",
-                stderr=target_env.error or "",
+                stdout=f"Dependencies provisioned: {len(env_res.detected_dependencies)} packages detected ({env_res.python_version}).",
+                stderr=env_res.failure_reason or env_res.pip_log_excerpt or "",
                 latency_ms=round(latency_ms, 2),
-                parent_validated=True,
-                validation_notes=target_env.notes,
+                parent_validated=(exit_code == 0),
+                validation_notes=env_res.notes,
                 structured_evidence={
-                    "has_manifest": target_env.has_manifest,
-                    "detected_dependencies": target_env.detected_dependencies,
-                    "provisioned": target_env.provisioned,
-                    "python_executable": target_env.python_executable,
-                    "network_isolated": target_env.network_isolated,
-                    "setup_latency_ms": target_env.setup_latency_ms
+                    "has_manifest": env_res.has_manifest,
+                    "detected_dependencies": env_res.detected_dependencies,
+                    "provisioned": env_res.provisioned,
+                    "python_executable": env_res.python_executable,
+                    "python_version": env_res.python_version,
+                    "venv_path": env_res.venv_path,
+                    "wheel_cache_dir": env_res.wheel_cache_dir,
+                    "build_duration_ms": env_res.build_duration_ms,
+                    "build_output": env_res.build_output,
+                    "pip_log_excerpt": env_res.pip_log_excerpt,
+                    "failure_classification": env_res.failure_classification,
+                    "failure_reason": env_res.failure_reason,
+                    "network_isolated": env_res.network_isolated,
+                    "setup_latency_ms": env_res.build_duration_ms
                 },
                 attestation=attestation
             )
@@ -129,6 +139,12 @@ class LocalSubprocessBackend(ExecutionBackend):
                 latency_ms=round(latency_ms, 2),
                 parent_validated=False,
                 error=f"Dependency provisioning failed: {e}",
+                structured_evidence={
+                    "has_manifest": True,
+                    "provisioned": False,
+                    "failure_classification": "ENV_BUILD_FAILED",
+                    "failure_reason": str(e),
+                },
                 attestation=self.generate_attestation(workspace_id)
             )
 

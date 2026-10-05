@@ -42,15 +42,25 @@ class VerdictEngine:
             terminal_state = "UNREACHABLE_FALSE_POSITIVE"
             reason = "Zero incoming execution edges from analyzed entrypoints; false positive suppressed."
 
+        # Environment Construction Failure Check (Spec §4.5)
+        elif behavior_ev.pre_patch_state == "ENV_BUILD_FAILED":
+            terminal_state = "ENV_BUILD_FAILED"
+            reason = f"Target environment construction failed: {behavior_ev.validation_notes or 'dependency provisioning error'}"
+
         # 2. Parent-Side Verification Trust Boundary Check
         elif behavior_ev.pre_patch_state == "VERIFICATION_REJECTED" or behavior_ev.post_patch_state == "VERIFICATION_REJECTED":
             terminal_state = "VERIFICATION_REJECTED"
             reason = f"Parent trust boundary rejected child assertion: {behavior_ev.validation_notes}"
 
-        # 3. Pre-Patch Inconclusive Check
-        elif behavior_ev.pre_patch_state == "INCONCLUSIVE":
+        # 3. Pre-Patch Inconclusive Check (Defensive guard or safe runtime blocked attack probe)
+        elif behavior_ev.pre_patch_state in ["INCONCLUSIVE", "GREEN_STATE_BLOCKED"]:
             terminal_state = "INCONCLUSIVE"
-            reason = "Pre-patch verification was inconclusive; defensive guard or environment prevented reproducing red state."
+            reason = (
+                "Pre-patch verification was inconclusive: the unpatched runtime or defensive guard already blocked the exploit probe, "
+                "preventing reproduction of a red state in this environment."
+                if behavior_ev.pre_patch_state == "GREEN_STATE_BLOCKED"
+                else "Pre-patch verification was inconclusive; defensive guard or environment prevented reproducing red state."
+            )
 
         # 4. Pre-Patch Crash / Abort Check
         elif behavior_ev.pre_patch_state != "RED_STATE_REPRODUCED":
@@ -114,7 +124,9 @@ class VerdictEngine:
             "regression_test_count": regression_ev.test_count,
             "sandbox_engine": exec_ev.sandbox_engine,
             "isolation_tier": getattr(exec_ev, "isolation_tier", exec_ev.sandbox_engine),
-            "cloud_status": exec_ev.cloud_status
+            "cloud_status": exec_ev.cloud_status,
+            "target_python_version": getattr(exec_ev, "target_python_version", None),
+            "environment_build_duration_ms": getattr(exec_ev, "environment_build_duration_ms", None),
         }
 
         # Derive Assurance Level and Policy Audit (P0.7)

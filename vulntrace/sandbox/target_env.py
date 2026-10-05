@@ -9,9 +9,6 @@ Provides controlled, isolated provisioning of external repository dependencies:
 """
 
 import os
-import sys
-import subprocess
-import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Callable
 from pydantic import BaseModel, Field
@@ -21,8 +18,14 @@ class TargetEnvironmentResult(BaseModel):
     detected_dependencies: List[str] = Field(default_factory=list)
     provisioned: bool = False
     python_executable: str
+    python_version: str = ""
     network_isolated: bool = True
     setup_latency_ms: float = 0.0
+    venv_path: Optional[str] = None
+    wheel_cache_dir: Optional[str] = None
+    build_output: Optional[str] = None
+    pip_log_excerpt: Optional[str] = None
+    failure_classification: Optional[str] = None
     error: Optional[str] = None
     notes: str = ""
 
@@ -156,161 +159,32 @@ class TargetEnvironmentManager:
         on_log: Optional[Callable[[str], None]] = None
     ) -> TargetEnvironmentResult:
         """
-        Provisions a temporary virtual environment inside disposable_dir.
-        Installs declared dependencies during this setup stage, then locks network access.
-        Every provisioning subprocess receives a strictly sanitized environment (P0.5.1).
+        Provisions a dedicated target virtual environment using EnvironmentBuilder (Spec §4.5).
+        Maintains backward compatibility with TargetEnvironmentResult callers.
         """
-        t0 = time.perf_counter()
+        from vulntrace.envbuild.builder import EnvironmentBuilder
         disposable_dir = Path(disposable_dir).resolve()
-        has_manifest, deps = cls.detect_dependencies(disposable_dir)
 
-        # Resolve base python with ensurepip/pip capabilities
-        candidates = [
-            Path(sys.base_prefix) / ("python.exe" if sys.platform == "win32" else "bin/python"),
-            Path("C:/Python314/python.exe"),
-            Path(sys.executable)
-        ]
-        base_py = str(next((c for c in candidates if c.exists()), sys.executable or "python"))
-        host_py = sys.executable or "python"
+        env_res = EnvironmentBuilder.build_environment(
+            repo_dir=disposable_dir,
+            workspace_id=disposable_dir.name,
+            timeout=timeout,
+            on_log=on_log
+        )
 
-        # If no manifest or dependencies detected, return host python with no-op setup
-        if not has_manifest or not deps:
-            dt = (time.perf_counter() - t0) * 1000.0
-            return TargetEnvironmentResult(
-                has_manifest=False,
-                detected_dependencies=[],
-                provisioned=False,
-                python_executable=host_py,
-                network_isolated=True,
-                setup_latency_ms=round(dt, 2),
-                notes="No target dependencies detected; using baseline execution runtime."
-            )
-
-        if on_log:
-            on_log(f"Detected {len(deps)} dependencies: {', '.join(deps[:5])}{'...' if len(deps) > 5 else ''}")
-
-        # Create temporary isolated venv inside disposable sandbox workspace
-        target_venv_dir = disposable_dir / ".target_venv"
-        target_py = target_venv_dir / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python")
-
-        # P0.5.1: Proactively sanitized provisioning environment
-        prov_env = cls.sanitize_provisioning_environment(disposable_dir)
-
-        try:
-            if on_log:
-                on_log(f"Creating isolated target virtualenv in {target_venv_dir.name}...")
-
-            # 1. Spawn base_py -m venv with sanitized environment
-            venv_proc = subprocess.run(
-                [base_py, "-m", "venv", str(target_venv_dir)],
-                cwd=str(disposable_dir),
-                capture_output=True,
-                text=True,
-                env=prov_env,
-                timeout=timeout
-            )
-            if venv_proc.returncode != 0:
-                dt = (time.perf_counter() - t0) * 1000.0
-                return TargetEnvironmentResult(
-                    has_manifest=True,
-                    detected_dependencies=deps,
-                    provisioned=False,
-                    python_executable=host_py,
-                    network_isolated=True,
-                    setup_latency_ms=round(dt, 2),
-                    error=f"venv creation failed (exit {venv_proc.returncode}): {venv_proc.stderr[:200]}",
-                    notes="Failed to create isolated target venv; falling back to host runtime."
-                )
-
-            if not target_py.exists():
-                dt = (time.perf_counter() - t0) * 1000.0
-                return TargetEnvironmentResult(
-                    has_manifest=True,
-                    detected_dependencies=deps,
-                    provisioned=False,
-                    python_executable=host_py,
-                    network_isolated=True,
-                    setup_latency_ms=round(dt, 2),
-                    error=f"Target python binary not found at {target_py}",
-                    notes="Failed to locate target python binary; falling back to host runtime."
-                )
-
-            # 2. Install dependencies into isolated target venv (controlled setup stage)
-            if on_log:
-                on_log("Installing target dependencies in controlled setup stage...")
-
-            req_file = disposable_dir / "requirements.txt"
-            pip_cmd = [
-                str(target_py), "-m", "pip", "install",
-                "--isolated",
-                "--no-cache-dir",
-                "--no-warn-script-location",
-                "pytest"
-            ]
-            if req_file.exists():
-                pip_cmd.extend(["-r", str(req_file)])
-            else:
-                pip_cmd.extend(deps)
-
-            pip_proc = subprocess.run(
-                pip_cmd,
-                cwd=str(disposable_dir),
-                capture_output=True,
-                text=True,
-                env=prov_env,
-                timeout=timeout
-            )
-
-            dt = (time.perf_counter() - t0) * 1000.0
-
-            if pip_proc.returncode != 0:
-                if on_log:
-                    on_log(f"Warning: pip install returned {pip_proc.returncode}: {pip_proc.stderr[:120]}")
-                return TargetEnvironmentResult(
-                    has_manifest=True,
-                    detected_dependencies=deps,
-                    provisioned=False,
-                    python_executable=host_py,
-                    network_isolated=True,
-                    setup_latency_ms=round(dt, 2),
-                    error=f"pip install exited {pip_proc.returncode}: {pip_proc.stderr[:200]}",
-                    notes="Target environment dependency installation failed; falling back to host runtime."
-                )
-
-            if on_log:
-                on_log(f"Target environment successfully provisioned ({round(dt, 2)}ms). Network access locked for verification.")
-
-            return TargetEnvironmentResult(
-                has_manifest=True,
-                detected_dependencies=deps,
-                provisioned=True,
-                python_executable=str(target_py),
-                network_isolated=True,
-                setup_latency_ms=round(dt, 2),
-                notes=f"Isolated target environment created with {len(deps)} installed dependencies."
-            )
-
-        except subprocess.TimeoutExpired:
-            dt = (time.perf_counter() - t0) * 1000.0
-            return TargetEnvironmentResult(
-                has_manifest=True,
-                detected_dependencies=deps,
-                provisioned=False,
-                python_executable=host_py,
-                network_isolated=True,
-                setup_latency_ms=round(dt, 2),
-                error="Provisioning timed out",
-                notes="Target environment provisioning exceeded timeout watchdog; fallback to host runtime."
-            )
-        except Exception as e:
-            dt = (time.perf_counter() - t0) * 1000.0
-            return TargetEnvironmentResult(
-                has_manifest=True,
-                detected_dependencies=deps,
-                provisioned=False,
-                python_executable=host_py,
-                network_isolated=True,
-                setup_latency_ms=round(dt, 2),
-                error=f"{type(e).__name__}: {str(e)}",
-                notes="Error during target environment provisioning."
-            )
+        return TargetEnvironmentResult(
+            has_manifest=env_res.has_manifest,
+            detected_dependencies=env_res.detected_dependencies,
+            provisioned=env_res.provisioned,
+            python_executable=env_res.python_executable,
+            python_version=env_res.python_version,
+            network_isolated=env_res.network_isolated,
+            setup_latency_ms=env_res.build_duration_ms,
+            venv_path=env_res.venv_path,
+            wheel_cache_dir=env_res.wheel_cache_dir,
+            build_output=env_res.build_output,
+            pip_log_excerpt=env_res.pip_log_excerpt,
+            failure_classification=env_res.failure_classification,
+            error=env_res.failure_reason,
+            notes=env_res.notes
+        )

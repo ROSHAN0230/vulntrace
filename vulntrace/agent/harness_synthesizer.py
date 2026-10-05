@@ -145,10 +145,26 @@ if sys.argv:
 # Network isolation guard: prevent child network access during behavioral verification
 try:
     import socket
-    def _blocked_socket(*args, **kwargs):
-        raise PermissionError("Network access blocked during sandbox behavioral verification.")
-    socket.socket = _blocked_socket
-    socket.create_connection = _blocked_socket
+    class _BlockedSocket(socket.socket):
+        def __init__(self, *args, **kwargs):
+            raise PermissionError("Network access blocked during sandbox behavioral verification.")
+    socket.socket = _BlockedSocket
+    socket.create_connection = _BlockedSocket
+except Exception:
+    pass
+
+# Compatibility shims for legacy frameworks
+try:
+    import flask
+    if not hasattr(flask, 'Markup'):
+        import markupsafe
+        flask.Markup = markupsafe.Markup
+    if not hasattr(flask, 'json'):
+        import json as _std_json
+        flask.json = _std_json
+    elif not hasattr(flask.json, 'JSONEncoder'):
+        import json as _std_json
+        flask.json.JSONEncoder = getattr(_std_json, 'JSONEncoder', object)
 except Exception:
     pass
 
@@ -171,6 +187,35 @@ except Exception as import_err:
     }}))
     sys.exit(1)
 
+# Target invocation helper supporting direct arguments, carrier objects, and custom signatures
+def _invoke_target(target_fn, inp):
+    import inspect
+    sig = None
+    try:
+        sig = inspect.signature(target_fn)
+    except Exception:
+        pass
+    if sig:
+        params = list(sig.parameters.values())
+        if len(params) >= 2:
+            p0 = params[0].name.lower()
+            p1 = params[1].name.lower()
+            if any(k in p0 for k in ["obj", "target", "func", "view"]) and any(k in p1 for k in ["doc", "process", "sanit"]):
+                def _carrier():
+                    pass
+                carrier_doc = str(inp)
+                if "\\n---" not in carrier_doc and not carrier_doc.strip().startswith("---"):
+                    carrier_doc = f"Summary line\\nDescription line\\n---\\n{{carrier_doc}}"
+                _carrier.__doc__ = carrier_doc
+                res_tuple = target_fn(_carrier, lambda d: d)
+                if isinstance(res_tuple, tuple):
+                    for item in reversed(res_tuple):
+                        if item is not None:
+                            return item
+                    return res_tuple
+                return res_tuple
+    return target_fn(inp)
+
 sentinel = Path("{sentinel_name}")
 if sentinel.exists():
     try:
@@ -183,7 +228,7 @@ payload = {payload_expr}
 
 try:
     # Execute target function in isolated sandbox
-    res = {func_name}(payload)
+    res = _invoke_target({func_name}, payload)
 
     # Check if risky behavior materialized
     if sentinel.exists():
@@ -224,7 +269,7 @@ except sec_block_types as sec_err:
 
             for case in benign_cases:
                 c_id = case["id"]
-                r = {func_name}(case["input"])
+                r = _invoke_target({func_name}, case["input"])
 
                 if r is None:
                     raise ValueError(f"Contract '{{c_id}}' failed: returned None")
