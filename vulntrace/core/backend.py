@@ -86,6 +86,10 @@ class ExecutionBackend(ABC):
         """Returns the specific enforceable security capabilities of this backend."""
         pass
 
+    def is_available(self) -> bool:
+        """Checks whether this execution backend is available on the current host."""
+        return True
+
     @abstractmethod
     async def initialize_workspace(self, source_repo: Path) -> str:
         """

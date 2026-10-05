@@ -58,7 +58,14 @@ class VerdictEngine:
             reason = f"Pre-patch execution failed with unexpected state: {behavior_ev.pre_patch_state}"
 
         # 5. Patch Acceptance & Validation Check
-        elif not patch_ev.success or patch_ev.validation_status in ["REJECTED_SYNTAX_ERROR", "REJECTED_EMPTY", "REJECTED_API_ERROR", "REJECTED"]:
+        elif not patch_ev.success or patch_ev.validation_status in [
+            "REJECTED_SYNTAX_ERROR",
+            "REJECTED_EMPTY",
+            "REJECTED_API_ERROR",
+            "REJECTED",
+            "REJECTED_DENYLIST_VIOLATION",
+            "REJECTED_EXCEPTION",
+        ]:
             terminal_state = "PATCH_REJECTED"
             reason = f"Remediation patch rejected ({patch_ev.validation_status}): {patch_ev.target_file}"
 

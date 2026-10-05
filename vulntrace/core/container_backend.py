@@ -9,7 +9,7 @@ import sys
 import time
 import subprocess
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Callable
+from typing import Dict, Any, Optional, List, Callable, Tuple
 
 from vulntrace.core.backend import (
     ExecutionBackend,
@@ -30,12 +30,19 @@ class ContainerExecutionBackend(ExecutionBackend):
 
     IMAGE_NAME = "vulntrace-sandbox-base:latest"
     DEFAULT_TIMEOUT = 10.0
-    _cached_available: Optional[bool] = None
+    _cached_available: Dict[Tuple[str, ...], bool] = {}
+    _cached_image_digest: Dict[Tuple[str, ...], str] = {}
 
     def __init__(self, wsl_distro: Optional[str] = "Ubuntu"):
         self.wsl_distro = wsl_distro
         self._image_digest: Optional[str] = None
         self._is_available: Optional[bool] = None
+
+    @classmethod
+    def clear_availability_cache(cls) -> None:
+        """Clears class-level availability and digest caches."""
+        cls._cached_available.clear()
+        cls._cached_image_digest.clear()
 
     @classmethod
     def to_wsl_path(cls, path: Path) -> str:
@@ -51,25 +58,27 @@ class ContainerExecutionBackend(ExecutionBackend):
         """Checks whether Podman is accessible in the environment and base sandbox image exists."""
         if self._is_available is not None:
             return self._is_available
-        if ContainerExecutionBackend._cached_available is not None:
-            self._is_available = ContainerExecutionBackend._cached_available
+
+        prefix_key = tuple(self._build_cli_prefix())
+        if prefix_key in ContainerExecutionBackend._cached_available:
+            self._is_available = ContainerExecutionBackend._cached_available[prefix_key]
             return self._is_available
 
         try:
-            cmd_ver = self._build_cli_prefix() + ["podman", "--version"]
+            cmd_ver = list(prefix_key) + ["podman", "--version"]
             proc_ver = subprocess.run(cmd_ver, capture_output=True, text=True, timeout=15)
             if proc_ver.returncode != 0:
-                ContainerExecutionBackend._cached_available = False
+                ContainerExecutionBackend._cached_available[prefix_key] = False
                 self._is_available = False
                 return False
 
-            cmd_img = self._build_cli_prefix() + ["podman", "image", "exists", self.IMAGE_NAME]
+            cmd_img = list(prefix_key) + ["podman", "image", "exists", self.IMAGE_NAME]
             proc_img = subprocess.run(cmd_img, capture_output=True, text=True, timeout=15)
             available = (proc_img.returncode == 0)
-            ContainerExecutionBackend._cached_available = available
+            ContainerExecutionBackend._cached_available[prefix_key] = available
             self._is_available = available
         except Exception:
-            ContainerExecutionBackend._cached_available = False
+            ContainerExecutionBackend._cached_available[prefix_key] = False
             self._is_available = False
 
         return self._is_available
@@ -85,18 +94,26 @@ class ContainerExecutionBackend(ExecutionBackend):
         if self._image_digest:
             return self._image_digest
 
+        prefix_key = tuple(self._build_cli_prefix())
+        if prefix_key in ContainerExecutionBackend._cached_image_digest:
+            self._image_digest = ContainerExecutionBackend._cached_image_digest[prefix_key]
+            return self._image_digest
+
         try:
-            cmd = self._build_cli_prefix() + [
+            cmd = list(prefix_key) + [
                 "podman", "inspect", "--format", "{{.Id}}", self.IMAGE_NAME
             ]
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
             if proc.returncode == 0 and proc.stdout.strip():
-                self._image_digest = proc.stdout.strip()
+                digest = proc.stdout.strip()
+                ContainerExecutionBackend._cached_image_digest[prefix_key] = digest
+                self._image_digest = digest
                 return self._image_digest
         except Exception:
             pass
 
         self._image_digest = "sha256:vulntrace-sandbox-base-local"
+        ContainerExecutionBackend._cached_image_digest[prefix_key] = self._image_digest
         return self._image_digest
 
     @property

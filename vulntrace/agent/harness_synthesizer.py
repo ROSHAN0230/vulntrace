@@ -32,20 +32,17 @@ class HarnessSynthesizer:
 
         sentinel_name = req.sentinel_filename or cls.DEFAULT_SENTINEL
 
-        # Classify vulnerability type from AST call name
-        is_yaml_deserialization = any(k in vuln_sym for k in ["yaml.load", "yaml.full_load", "yaml.unsafe_load"])
-        is_pickle_deserialization = any(k in vuln_sym for k in ["pickle.loads", "pickle.load", "_pickle.loads"])
+        # Classify vulnerability type via SinkOracleRegistry (Spec §4.3)
+        from vulntrace.sinks import SinkOracleRegistry
+        oracle = SinkOracleRegistry.get_oracle_for_symbol(vuln_sym)
+
         is_command_exec = any(k in vuln_sym for k in ["os.system", "subprocess.popen", "subprocess.call", "subprocess.run"])
         is_code_eval = any(k in vuln_sym for k in ["eval", "exec"])
 
-        if is_yaml_deserialization:
-            payload_expr = f'"""\nexploit: !!python/object/apply:builtins.eval ["open(\'{sentinel_name}\', \'w\').close()"]\n"""'
-            import_block = """try:
-    import yaml
-    sec_block_types = (yaml.constructor.ConstructorError, yaml.parser.ParserError, yaml.YAMLError)
-except Exception:
-    class _EmptySecBlock(Exception): pass
-    sec_block_types = (_EmptySecBlock,)"""
+        if oracle and "yaml" in oracle.name.lower():
+            probe = oracle.get_probe(sentinel_name)
+            payload_expr = probe.payload_expr
+            import_block = oracle.get_harness_import_block()
             benign_suite_code = """[
     {
         "id": "flat_service_mapping",
@@ -69,15 +66,10 @@ except Exception:
         "check": lambda r: isinstance(r.get("database"), dict) and r["database"].get("port") == 5432 and isinstance(r["database"].get("endpoints"), list) and len(r["database"]["endpoints"]) == 2
     }
 ]"""
-        elif is_pickle_deserialization:
-            payload_expr = f'__import__("pickle").dumps(type("Exploit", (), {{"__reduce__": lambda self: (open, ("{sentinel_name}", "w"))}})())'
-            import_block = """try:
-    import pickle
-    import _pickle
-    sec_block_types = (pickle.UnpicklingError, _pickle.UnpicklingError, AttributeError, ValueError)
-except Exception:
-    class _EmptySecBlock(Exception): pass
-    sec_block_types = (_EmptySecBlock,)"""
+        elif oracle and "pickle" in oracle.name.lower():
+            probe = oracle.get_probe(sentinel_name)
+            payload_expr = probe.payload_expr
+            import_block = oracle.get_harness_import_block()
             benign_suite_code = """[
     {
         "id": "pickle_flat_dict",

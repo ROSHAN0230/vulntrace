@@ -21,25 +21,26 @@ from vulntrace.core.container_backend import ContainerExecutionBackend
 
 
 def get_available_backends():
-    """Returns all backends available on the current machine."""
-    backends = [
-        pytest.param(LocalSubprocessBackend(), id="LOCAL_SUBPROCESS_FALLBACK")
-    ]
-    container_backend = ContainerExecutionBackend()
-    if container_backend.is_available():
-        backends.append(
-            pytest.param(
-                container_backend,
-                id="OCI_CONTAINER_ISOLATED",
-                marks=pytest.mark.container
-            )
+    """Returns supported backends with explicit container marker encoding."""
+    return [
+        pytest.param(LocalSubprocessBackend(), id="LOCAL_SUBPROCESS_FALLBACK"),
+        pytest.param(
+            ContainerExecutionBackend(),
+            id="OCI_CONTAINER_ISOLATED",
+            marks=pytest.mark.container
         )
-    return backends
+    ]
 
 
 @pytest.mark.parametrize("backend", get_available_backends())
 class TestBackendConformanceSuite:
     """Verifies that each backend conforms to its declared security contract."""
+
+    @pytest.fixture(autouse=True)
+    def skip_if_backend_unavailable(self, backend: ExecutionBackend):
+        """Skips conformance tests if the execution backend is not available on this host."""
+        if not backend.is_available():
+            pytest.skip(f"Execution backend {backend.capabilities.tier.value} is not available on this host.")
 
     @pytest.mark.asyncio
     async def test_conformance_workspace_lifecycle_and_isolation(self, backend: ExecutionBackend, tmp_path):

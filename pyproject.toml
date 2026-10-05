@@ -31,6 +31,7 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+norecursedirs = [".*", "build", "dist", "*.egg", "fixtures"]
 markers = [
     "container: tests requiring rootless OCI Podman container substrate and base image",
     "windows: tests requiring Windows Win32 Job Object or platform-specific features",

@@ -212,7 +212,29 @@ class RemediationPatcher:
                     error=str(e)
                 )
 
-        # 3. Compute unified diff
+        # 3. Validate candidate code against Anti-Gaming Patch Denylist (Spec §4.4)
+        from vulntrace.verifier.anti_gaming import PatchDenylistValidator
+        denylist_res = PatchDenylistValidator.validate_patch(
+            orig_code=orig_code,
+            patched_code=patched_code,
+            target_function_name=None,
+            allowed_target_file=req.target_file,
+        )
+        if not denylist_res.allowed:
+            dt = (time.perf_counter() - t0) * 1000.0
+            return RemediationResponse(
+                cve_id=req.cve_id,
+                target_file=req.target_file,
+                engine=engine_used,
+                diff="",
+                explanation=f"Patch rejected by anti-gaming denylist: {'; '.join(denylist_res.violations)}",
+                latency_ms=round(dt, 2),
+                success=False,
+                validation_status="REJECTED_DENYLIST_VIOLATION",
+                error="; ".join(denylist_res.violations),
+            )
+
+        # 4. Compute unified diff
         diff_lines = list(difflib.unified_diff(
             orig_code.splitlines(keepends=True),
             patched_code.splitlines(keepends=True),

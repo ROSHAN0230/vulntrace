@@ -4,6 +4,15 @@ All major project updates and milestones completed during the Nebius × NVIDIA G
 
 ---
 
+## [M1] Verifier Hardening + Deserialization Oracle — 2026-10-05
+- **Sink-Class Oracle Library (Spec §4.3):** Implemented `vulntrace/sinks/` package with reviewed oracles (`YamlDeserializationOracle`, `PickleDeserializationOracle`, `DeserializationSinkOracle`, and `SinkOracleRegistry`). Covers unsafe `yaml.load`/loaders, `pickle.loads`, behavioral probes (canary in workspace), expected exception signatures, safe patterns, and positive control contracts.
+- **Anti-Gaming Verifier (Spec §4.4):** Implemented `vulntrace/verifier/` package with `AntiGamingVerifier`, `PatchDenylistValidator`, and `IntegrityAuditor`. Enforces RED 3/3 replication, SHA-256 integrity of harness and test files outside patched tree, AST patch denylist (rejects `sys.exit`, `os._exit`, `os.kill`, broad `except: pass`, target function deletion, empty diff), GREEN 3/3 flake check, and anti-spoofing guard against bare exit 42.
+- **Bad-Patch Zoo (Spec §4.4):** Implemented 10 adversarial patch evaluations in `tests/verifier/test_bad_patch_zoo.py`, verifying 0 false GREENs across all bad patches, and proving genuine `yaml.safe_load` achieves `GREEN_STATE_VERIFIED` 3/3.
+- **Test Fixtures & Acceptance Gates:** Added vulnerable and fixed fixtures for YAML and Pickle in `tests/fixtures/deserialization/`. Verified `pytest tests/verifier/ -q` passes (34/34 passed) and full regression suite passes (140/140 passed).
+- **Evidence Documentation:** Generated `docs/evidence/verifier_redteam.md` recording the complete zoo verdict matrix, execution outputs, and real bugs resolved.
+
+---
+
 ## [M0] Baseline Audit and Hygiene — 2026-10-04
 - **Repository Hygiene:** Cleaned repository root to $\le 10$ items. Archived legacy Phase 1–4 reports, compliance audits, and screenshots into `docs/archive/`.
 - **Agent Rules & Master Spec:** Adopted `VULNTRACE_STUDIO_SPEC.md` as the canonical master specification and recorded Section 8 rules into `AGENTS.md` and `.agents/rules/directive.md`.
