@@ -2,6 +2,26 @@
 
 All major project updates and milestones completed during the Nebius × NVIDIA Global AI Hackathon 2026.
 
+## [M4] Tavily Runtime Threat Intel + LLM Tiering — 2026-10-06
+- **Tavily Runtime Threat Intelligence (Spec §4.7):** Integrated runtime threat intel gathering into the core verification pipeline (`vulntrace/intel/tavily_client.py` and `vulntrace/intel/threat_intel.py`). Generates canonical `ThreatIntel` models containing raw search queries, ISO timestamps, source URLs, response SHA-256 fingerprint, findings, affected symbols, safe patterns, and sink classes.
+- **Material AST & Oracle Influence:** Threat intelligence results actively guide static analysis and oracle dispatch: extracted candidate symbols expand AST reachability queries, and discovered sink classes resolve specific sink oracles via `SinkOracleRegistry.get_candidate_symbols_for_intel()` and `get_oracle_for_intel()`.
+- **Resilient Degradation & Offline Replay:** Added `IntelCassetteManager` with SHA-256 keyed cassette storage (`vulntrace/intel/cassettes/`) enabling 100% offline CI runs. Handled network failures and missing API keys gracefully with `status: "degraded"` without fabricating evidence.
+- **Nebius Token Factory Model Tiering (Spec §4.8):** Live-verified 25 available models from Nebius Token Factory `/models` API and mapped canonical LLM tiers to verified models:
+  - `SMALL` (`nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B`): Triage and initial vulnerability classification
+  - `MID` (`nvidia/nemotron-3-super-120b-a12b`): Patch planning and strategy formulation
+  - `ULTRA` (`nvidia/Nemotron-3-Ultra-550b-a55b`): Surgical patch synthesis and repair
+- **Prompt Injection Defense & Structured Output:** Wrapped untrusted target code and CVE summaries in strict delimiters (`<<<UNTRUSTED_CODE_OR_ADVISORY>>>` / `<<<END_UNTRUSTED>>>`). Enforced Pydantic structured output models (`TriageAnalysisOutput`, `PatchPlanOutput`, `SurgicalPatchOutput`) with automatic schema extraction, error feedback retries (up to 2 attempts), and markdown code block extraction.
+- **Token Accounting & Secret Hygiene (Spec §4.8 & §4.11):** Implemented `TokenLedger` tracking per-stage prompt tokens, completion tokens, reasoning tokens, and latencies across multiple tiers ($\ge 2$ tiers exercised in pipeline). Enforced regex-based API key redaction (`[REDACTED_API_KEY]`) ensuring zero secrets appear in ledgers, logs, or evidence bundles.
+- **Offline Deterministic CI Cassettes:** Seeded verifiable offline cassettes in `vulntrace/llm/cassettes/` and created `tests/test_offline_ci_cassettes.py` to ensure complete E2E pipeline execution under 100% blocked external network socket calls.
+- **Real Execution Bugs Caught & Fixed:**
+  1. *vLLM `completion_tokens_details` NoneType Bug:* In Nebius Token Factory API, `usage.get("completion_tokens_details")` can return `None`. Fixed via `(usage.get("completion_tokens_details") or {}).get("reasoning_tokens")`.
+  2. *Reasoning Model Content Relocation:* Output content placed in `message.reasoning` when completion tokens were consumed in thought trace; added fallback extraction.
+  3. *AST Unified Diff Python Syntax False Positive:* Python 3.14 `ast.parse` treated diff lines (`diff`, `-func()`, `+func()`) as valid subtraction/addition expressions; enforced strict markdown Python code block extraction.
+  4. *English Substring Collision in Symbol Extractor:* `ThreatIntelNormalizer` matched bare symbol names (`eval`, `exec`) as plain substrings in advisory prose (e.g. "arbitrary code execution"); fixed by requiring word boundaries and call syntax (`\bexec\s*\(` or `` `exec` ``).
+  5. *Target Function AST Binding Inconsistency:* Pipeline bound to `target_symbols[0]` from ThreatIntel rather than checking the actual AST call site within the target function; fixed by resolving `target_call` directly against `ast_res.discovered_calls`.
+  6. *Windows EventLoop Loopback Socket Collision:* Monkeypatching `socket.socket.connect` to verify zero network calls inadvertently blocked Python 3.14's `asyncio.ProactorEventLoop` internal self-pipe loopback socket on `127.0.0.1`; resolved by exempting loopback addresses (`127.0.0.1`, `::1`, `localhost`) in the fixture while strictly blocking external IPs.
+- **Test Suites & Quality Gates:** Added 12 new M4 tests (all passed in 16.22s); full non-container test suite passed (140 passed, 38 deselected in 285.20s); Tier 1 container suite passed (17 passed in 40.76s); `ruff check` passed clean (0 errors).
+
 ---
 
 ## [M3] Isolation Tier 1: Rootless Container Isolation & Adversarial Containment Proofs — 2026-10-06

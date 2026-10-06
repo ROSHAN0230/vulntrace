@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 from vulntrace.agent.nemotron_client import NemotronClient
 from vulntrace.models import RemediationRequest, RemediationResponse
+from vulntrace.llm.ledger import TokenLedger
 
 class RemediationPatcher:
     """Remediation synthesizer combining live Nemotron 3 Ultra and deterministic AST codemods."""
@@ -48,7 +49,8 @@ class RemediationPatcher:
     async def synthesize_remediation(
         cls,
         req: RemediationRequest,
-        workspace_dir: Optional[Path] = None
+        workspace_dir: Optional[Path] = None,
+        ledger: Optional[TokenLedger] = None
     ) -> RemediationResponse:
         t0 = time.perf_counter()
         base_dir = workspace_dir or Path(req.repo_path).resolve()
@@ -77,7 +79,7 @@ class RemediationPatcher:
 
         # 1. Attempt live Nemotron inference if requested
         if req.use_nemotron:
-            client = NemotronClient()
+            client = NemotronClient(ledger=ledger)
             if not client.api_key:
                 if not req.allow_ast_fallback:
                     dt = (time.perf_counter() - t0) * 1000.0

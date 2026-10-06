@@ -1,0 +1,10 @@
+{
+  "model": "nvidia/nemotron-3-super-120b-a12b",
+  "content": "\n\n{\n  \"target_file\": \"service.py\",\n  \"strategy\": \"Replace all occurrences of `yaml.load` without an explicit Loader with `yaml.safe_load`.\",\n  \"budget_lines\": 8,\n  \"safe_replacement_pattern\": \"yaml\\\\.load\\\\((.*)\\\\) -> yaml.safe_load(\\\\1)\",\n  \"justification\": \"Using `yaml.load` without a safe Loader can lead to arbitrary code execution during deserialization. Switching to `yaml.safe_load` mitigates this vulnerability while preserving needed functionality for typical YAML parsing.\"\n}",
+  "usage": {
+    "prompt_tokens": 246,
+    "completion_tokens": 347,
+    "reasoning_tokens": 222,
+    "total_tokens": 593
+  }
+}

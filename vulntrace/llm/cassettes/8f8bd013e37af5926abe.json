@@ -1,0 +1,10 @@
+{
+  "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "content": "```python\nimport yaml\nimport os\n\nclass AppSafeLoader(yaml.SafeLoader):\n    \"\"\"Secure application loader supporting internal configuration tags.\"\"\"\n    pass\n\ndef _env_tag_constructor(loader, node):\n    val = loader.construct_scalar(node)\n    return os.environ.get(val, f\"DEFAULT_{val}\")\n\nAppSafeLoader.add_constructor(\"!env_var\", _env_tag_constructor)\nyaml.Loader.add_constructor(\"!env_var\", _env_tag_constructor)\n\ndef parse_app_config(raw_yaml: str) -> dict:\n    \"\"\"\n    Parses application configuration.\n    Must maintain support for !env_var custom tag.\n    Vulnerable sink: currently uses unsafe yaml.load with default Loader.\n    \"\"\"\n    # Fixed: use AppSafeLoader (extends SafeLoader) to prevent arbitrary code execution\n    data = yaml.load(raw_yaml, Loader=AppSafeLoader)\n    if isinstance(data, dict):\n        return data\n    return {\"config\": data}\n```",
+  "usage": {
+    "prompt_tokens": 913,
+    "completion_tokens": 458,
+    "reasoning_tokens": 253,
+    "total_tokens": 1371
+  }
+}

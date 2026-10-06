@@ -1,0 +1,10 @@
+{
+  "model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "content": "\n{\n  \"cve_id\": \"CVE-2020-14343\",\n  \"vulnerability_class\": \"Deserialization\",\n  \"candidate_symbols\": [\n    \"yaml.load\"\n  ],\n  \"rationale\": \"The function parse_app_config uses yaml.load with the default Loader, which permits execution of arbitrary Python code through custom tags like !env_var. This matches CVE-2020-14343 where unsafe deserialization leads to code execution.\",\n  \"confidence\": 0.96\n}",
+  "usage": {
+    "prompt_tokens": 578,
+    "completion_tokens": 600,
+    "reasoning_tokens": 247,
+    "total_tokens": 1178
+  }
+}

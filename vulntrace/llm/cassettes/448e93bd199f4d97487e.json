@@ -1,0 +1,10 @@
+{
+  "model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "content": "\n{\n  \"cve_id\": \"CVE-2020-14343\",\n  \"vulnerability_class\": \"Deserialization\",\n  \"candidate_symbols\": [\n    \"yaml.load\"\n  ],\n  \"rationale\": \"The vulnerability stems from unsafe deserialization in PyYAML's yaml.load function, which can execute arbitrary code when parsing malicious YAML, classifying it as a deserialization issue.\",\n  \"confidence\": 0.96\n}",
+  "usage": {
+    "prompt_tokens": 278,
+    "completion_tokens": 561,
+    "reasoning_tokens": 221,
+    "total_tokens": 839
+  }
+}

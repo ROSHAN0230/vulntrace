@@ -31,7 +31,10 @@ from vulntrace.models import (
     RegressionEvidence,
     ExecutionEvidence,
     EnvironmentEvidence,
-    FinalVerdictRecord
+    FinalVerdictRecord,
+    ThreatIntel,
+    TriageAnalysisOutput,
+    PatchPlanOutput
 )
 from vulntrace.sandbox.target_env import TargetEnvironmentManager
 from vulntrace.core.backend import ExecutionBackend, IsolationTier
@@ -41,7 +44,10 @@ from vulntrace.agent.harness_synthesizer import HarnessSynthesizer
 from vulntrace.agent.patcher import RemediationPatcher
 from vulntrace.engine.verdict_engine import VerdictEngine
 from vulntrace.intel.tavily_client import TavilyClient
-from vulntrace.config import settings
+from vulntrace.sinks import SinkOracleRegistry
+from vulntrace.llm.ledger import TokenLedger
+from vulntrace.llm.client import TokenFactoryClient
+from vulntrace.llm.tier import LLMModelTier
 
 class VerificationPipeline:
     """Executes end-to-end controlled defensive verification in disposable sandboxes."""
@@ -91,6 +97,28 @@ class VerificationPipeline:
             raise PermissionError(f"Execution policy violation: {policy_decision.policy_violations}")
 
         emit("LOG", "POLICY", f"Security Policy Active: {assurance_level.value} on {backend.capabilities.tier.value}.", policy_decision.model_dump())
+
+        # Initialize M4 Accounting & Threat Intelligence
+        token_ledger = TokenLedger()
+        tavily_client = TavilyClient()
+
+        emit("STAGE_START", "INTEL", f"Querying Threat Intelligence & security advisories for {req.cve_id}...")
+        try:
+            threat_intel = await tavily_client.query_threat_intel(req.cve_id)
+            if threat_intel.status == "degraded":
+                emit("LOG", "INTEL", f"Threat intelligence degraded: {threat_intel.error or 'provider unavailable'}. Falling back to default definitions.")
+            else:
+                emit("STAGE_COMPLETE", "INTEL", f"Threat intelligence resolved ({threat_intel.status}): {len(threat_intel.findings)} finding(s), symbols={threat_intel.affected_symbols}, hash={threat_intel.response_hash[:12]}...")
+        except Exception as e:
+            threat_intel = ThreatIntel(
+                cve_id=req.cve_id,
+                query=f'"{req.cve_id}" vulnerable function fix commit exploit',
+                timestamp=time.time(),
+                status="degraded",
+                error=str(e),
+                response_hash="none"
+            )
+            emit("LOG", "INTEL", f"Threat intelligence degraded due to unexpected error: {e}")
 
         emit("STAGE_START", "SANDBOX", f"Initializing disposable workspace on backend ({backend.capabilities.tier.value})...")
         workspace_id = await backend.initialize_workspace(source_repo)
@@ -209,7 +237,9 @@ class VerificationPipeline:
                 final_behavioral_verdict="ENV_BUILD_FAILED",
                 structured_evidence={
                     "environment": env_evidence.model_dump(),
-                    "failure_classification": "ENV_BUILD_FAILED"
+                    "failure_classification": "ENV_BUILD_FAILED",
+                    "threat_intel": threat_intel.model_dump() if threat_intel else None,
+                    "token_ledger": token_ledger.get_summary().model_dump() if token_ledger else None
                 },
                 verdict_record=verdict_rec,
                 environment=env_evidence,
@@ -218,7 +248,9 @@ class VerificationPipeline:
                 total_pipeline_ms=round(dt_total, 2),
                 isolation_tier=backend.capabilities.tier.value,
                 assurance_level=assurance_level.value,
-                policy_decision=policy_decision.model_dump()
+                policy_decision=policy_decision.model_dump(),
+                threat_intel=threat_intel,
+                token_ledger=token_ledger.get_summary() if token_ledger else None
             )
 
         if prov_result.exit_code == 0:
@@ -252,33 +284,50 @@ class VerificationPipeline:
             )
 
         try:
-            vuln_sym = req.vulnerable_symbol or "yaml.load"
+            # Candidate symbols determined materially from ThreatIntel + request
+            if req.vulnerable_symbol:
+                target_symbols = [req.vulnerable_symbol]
+                for s in SinkOracleRegistry.get_candidate_symbols_for_intel(threat_intel):
+                    if s not in target_symbols:
+                        target_symbols.append(s)
+            else:
+                target_symbols = SinkOracleRegistry.get_candidate_symbols_for_intel(threat_intel)
+
+            vuln_sym = target_symbols[0] if target_symbols else "yaml.load"
 
             # Stage 0: AST Reachability Analysis
-            emit("STAGE_START", "AST", f"Analyzing AST reachability for {vuln_sym} in {source_repo.name}...")
+            emit("STAGE_START", "AST", f"Analyzing AST reachability for {target_symbols} in {source_repo.name}...")
             ast_res = AstReachabilityAnalyzer.analyze_repository(AstAnalyzeRequest(
                 repo_path=str(source_repo),
-                target_symbols=[vuln_sym],
+                target_symbols=target_symbols,
                 entrypoints=req.entrypoints
             ))
             reachability_verdict = ast_res.verdict
             emit("LOG", "AST", f"Discovered {len(ast_res.discovered_calls)} call sites ({ast_res.reachable_vulnerabilities_count} reachable, {ast_res.unreachable_dead_code_count} dead code).")
 
-            # Dynamic Target Inference if not explicitly supplied
-            resolved_target_file = req.target_file
-            resolved_target_func = req.target_function
-            resolved_vuln_sym = vuln_sym
+            # Dynamic Target Inference: bind to matching AST call site
+            target_call = None
+            if req.target_file or req.target_function:
+                matching = [
+                    c for c in ast_res.discovered_calls
+                    if (not req.target_file or c.file == req.target_file)
+                    and (not req.target_function or c.function_name == req.target_function)
+                ]
+                reachable_matching = [c for c in matching if c.reachable]
+                target_call = reachable_matching[0] if reachable_matching else (matching[0] if matching else None)
 
-            if not resolved_target_file or not resolved_target_func:
+            if not target_call:
                 reachable_sites = [c for c in ast_res.discovered_calls if c.reachable]
-                candidate = reachable_sites[0] if reachable_sites else (ast_res.discovered_calls[0] if ast_res.discovered_calls else None)
-                if candidate:
-                    resolved_target_file = candidate.file
-                    resolved_target_func = candidate.function_name
-                    resolved_vuln_sym = candidate.call_name
-                else:
-                    resolved_target_file = req.target_file or "unknown.py"
-                    resolved_target_func = req.target_function or "unknown"
+                target_call = reachable_sites[0] if reachable_sites else (ast_res.discovered_calls[0] if ast_res.discovered_calls else None)
+
+            if target_call:
+                resolved_target_file = req.target_file or target_call.file
+                resolved_target_func = req.target_function or target_call.function_name
+                resolved_vuln_sym = req.vulnerable_symbol or target_call.call_name
+            else:
+                resolved_target_file = req.target_file or "unknown.py"
+                resolved_target_func = req.target_function or "unknown"
+                resolved_vuln_sym = req.vulnerable_symbol or vuln_sym
 
             # Assemble baseline repository & advisory evidence
             repo_ev = RepositoryEvidence(
@@ -290,7 +339,10 @@ class VerificationPipeline:
                 cve_id=req.cve_id,
                 found=True,
                 summary=f"Automated verification session for {req.cve_id}",
-                source_url=f"https://osv.dev/vulnerability/{req.cve_id}"
+                source_url=f"https://osv.dev/vulnerability/{req.cve_id}",
+                pocs_count=len(threat_intel.findings) if threat_intel else 0,
+                pocs=threat_intel.findings if threat_intel else [],
+                tavily_latency_ms=threat_intel.latency_ms if threat_intel else None
             )
             reach_ev = ReachabilityEvidence(
                 target_symbol=resolved_vuln_sym,
@@ -398,7 +450,12 @@ class VerificationPipeline:
                     post_patch_result=empty_sandbox,
                     regression_tests=regression_res,
                     final_behavioral_verdict=verdict_rec.terminal_state,
-                    structured_evidence={"reachability": "UNREACHABLE_FALSE_POSITIVE", "dead_code_count": ast_res.unreachable_dead_code_count},
+                    structured_evidence={
+                        "reachability": "UNREACHABLE_FALSE_POSITIVE",
+                        "dead_code_count": ast_res.unreachable_dead_code_count,
+                        "threat_intel": threat_intel.model_dump() if threat_intel else None,
+                        "token_ledger": token_ledger.get_summary().model_dump() if token_ledger else None
+                    },
                     verdict_record=verdict_rec,
                     environment=env_evidence,
                     sandbox_engine=backend.capabilities.tier.value,
@@ -407,38 +464,14 @@ class VerificationPipeline:
                     isolation_tier=backend.capabilities.tier.value,
                     isolation_attestation=attestation.model_dump(),
                     assurance_level=assurance_level.value,
-                    policy_decision=policy_decision.model_dump()
+                    policy_decision=policy_decision.model_dump(),
+                    threat_intel=threat_intel,
+                    token_ledger=token_ledger.get_summary() if token_ledger else None
                 )
 
             emit("STATE_TRANSITION", "AST", f"REACHABLE VULNERABLE CALL PATH IDENTIFIED: Call graph path discovered to {resolved_target_file}:{resolved_target_func}()")
 
-            # Threat Intelligence Query via Tavily with Strict Relevance Filtering
-            tavily_report = None
-            tavily_findings = []
-            tavily_latency_ms = None
-            if getattr(req, "query_tavily", True) and settings.has_tavily:
-                emit("STAGE_START", "INTEL", f"Querying Tavily Threat Intelligence for real-time CVE advisories and PoCs for {req.cve_id}...")
-                try:
-                    tavily_client = TavilyClient()
-                    tavily_report = await tavily_client.search_with_relevance(req.cve_id, max_results=6)
-                    tavily_findings = tavily_report.findings
-                    tavily_latency_ms = tavily_report.latency_ms
-                    
-                    emit("STAGE_COMPLETE", "INTEL", 
-                         f"Tavily search completed: {tavily_report.raw_results_count} raw result(s), "
-                         f"{tavily_report.retained_results_count} verified relevant to {req.cve_id} "
-                         f"({tavily_report.filtered_out_count} excluded) in {tavily_latency_ms}ms.")
-                    
-                    for finding in tavily_findings[:2]:
-                        emit("LOG", "INTEL", f"Verified Relevant Reference: {finding.title} ({finding.url})")
-                    if tavily_report.filtered_out_count > 0:
-                        emit("LOG", "INTEL", f"Relevance Filter: Excluded {tavily_report.filtered_out_count} result(s) not referencing {req.cve_id}.")
-                except Exception as e:
-                    emit("LOG", "INTEL", f"Tavily threat intelligence query failed: {e}")
-
-            advisory_ev.pocs_count = len(tavily_findings)
-            advisory_ev.pocs = tavily_findings
-            advisory_ev.tavily_latency_ms = tavily_latency_ms
+            emit("LOG", "INTEL", f"Threat intelligence active ({threat_intel.status}): {len(threat_intel.findings)} finding(s), symbols={threat_intel.affected_symbols}")
 
             # Stage 1: Harness Synthesis
             emit("STAGE_START", "HARNESS", f"Synthesizing controlled verification harness for {req.cve_id}...")
@@ -542,14 +575,22 @@ class VerificationPipeline:
                     post_patch_result=empty_post,
                     regression_tests=regression_res,
                     final_behavioral_verdict=verdict_rec.terminal_state,
-                    structured_evidence=pre_res.structured_evidence,
+                    structured_evidence={
+                        **(pre_res.structured_evidence or {}),
+                        "threat_intel": threat_intel.model_dump() if threat_intel else None,
+                        "token_ledger": token_ledger.get_summary().model_dump() if token_ledger else None
+                    },
                     verdict_record=verdict_rec,
                     environment=env_evidence,
                     sandbox_engine=backend.capabilities.tier.value,
                     cloud_status="PERMISSION_DENIED (HTTP 403)",
                     total_pipeline_ms=round(dt_total, 2),
                     isolation_tier=backend.capabilities.tier.value,
-                    isolation_attestation=attestation.model_dump()
+                    isolation_attestation=attestation.model_dump(),
+                    assurance_level=assurance_level.value,
+                    policy_decision=policy_decision.model_dump(),
+                    threat_intel=threat_intel,
+                    token_ledger=token_ledger.get_summary() if token_ledger else None
                 )
 
             emit("STATE_TRANSITION", "REPRODUCTION", f"RED STATE REPRODUCED: Sentinel marker confirmed (exit {pre_res.exit_code}) in {pre_res.latency_ms}ms")
@@ -559,14 +600,74 @@ class VerificationPipeline:
             
             # Incorporate Tavily threat intelligence into advisory prompt for Nemotron
             advisory_context = req.advisory_summary or f"Remediate {req.cve_id} in {resolved_target_file}:{resolved_target_func}(): unsafe {resolved_vuln_sym} deserialization."
-            if tavily_findings:
+            if threat_intel and threat_intel.findings:
                 advisory_context += "\n\nReal-Time Verified Threat Intelligence & Exploitation Context (via Tavily Search):\n"
-                for idx, finding in enumerate(tavily_findings[:3], 1):
+                for idx, finding in enumerate(threat_intel.findings[:3], 1):
                     advisory_context += f"[{idx}] {finding.title}\nURL: {finding.url}\nContext: {finding.snippet}\n\n"
                 advisory_context += "Analyze this vulnerability context and synthesize a secure, minimal patch that prevents this exploit without breaking valid application data structures or custom loader handlers."
-                emit("LOG", "PATCH", f"Incorporated {min(len(tavily_findings), 3)} verified-relevant Tavily threat intelligence references into Nemotron reasoning context.")
-            elif tavily_report and tavily_report.raw_results_count > 0:
-                emit("LOG", "PATCH", f"Tavily returned {tavily_report.raw_results_count} results but none matched target {req.cve_id}; proceeding without unverified external intelligence.")
+                emit("LOG", "PATCH", f"Incorporated {min(len(threat_intel.findings), 3)} verified-relevant Tavily threat intelligence references into Nemotron reasoning context.")
+            elif threat_intel and threat_intel.status == "degraded":
+                emit("LOG", "PATCH", f"Threat intelligence is degraded ({threat_intel.error or 'unavailable'}); proceeding with baseline reasoning context.")
+
+            # Multi-tier LLM Orchestration (Small -> Mid -> Ultra) when Nemotron is requested
+            triage_out = None
+            plan_out = None
+            if req.use_nemotron:
+                token_client = TokenFactoryClient(ledger=token_ledger)
+                target_full_path = disposable_dir / resolved_target_file
+                file_snippet = target_full_path.read_text(encoding="utf-8")[:3000] if target_full_path.exists() else ""
+
+                # Tier 1: Small Tier Triage Analysis
+                emit("STAGE_START", "TRIAGE", f"Running vulnerability triage & classification via {LLMModelTier.SMALL.value}...")
+                triage_messages = [
+                    {
+                        "role": "system",
+                        "content": "You are VulnTrace Triage Specialist. Classify the vulnerability and determine candidate symbols."
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"CVE: {req.cve_id}\nTarget: {resolved_target_file}:{resolved_target_func}\n"
+                            f"Intel Symbols: {threat_intel.affected_symbols if threat_intel else []}\n"
+                            + TokenFactoryClient.wrap_untrusted_content(file_snippet, label="VULNERABLE_SOURCE")
+                        )
+                    }
+                ]
+                triage_out, triage_rec = await token_client.generate_structured(
+                    tier=LLMModelTier.SMALL,
+                    response_model=TriageAnalysisOutput,
+                    messages=triage_messages,
+                    stage="triage_classification"
+                )
+                if triage_out:
+                    emit("LOG", "TRIAGE", f"Triage complete: class={triage_out.vulnerability_class}, confidence={triage_out.confidence} ({triage_rec.total_tokens} tokens)")
+
+                # Tier 2: Mid Tier Patch Planning
+                emit("STAGE_START", "PLANNING", f"Formulating surgical patch plan via {LLMModelTier.MID.value}...")
+                plan_messages = [
+                    {
+                        "role": "system",
+                        "content": "You are VulnTrace Patch Strategist. Formulate a minimal, surgical repair strategy."
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"CVE: {req.cve_id}\nTarget: {resolved_target_file}:{resolved_target_func}\n"
+                            f"Triage: {triage_out.model_dump_json() if triage_out else 'N/A'}\n"
+                            f"Safe Patterns: {threat_intel.safe_patterns if threat_intel else []}\n"
+                            + TokenFactoryClient.wrap_untrusted_content(file_snippet, label="VULNERABLE_SOURCE")
+                        )
+                    }
+                ]
+                plan_out, plan_rec = await token_client.generate_structured(
+                    tier=LLMModelTier.MID,
+                    response_model=PatchPlanOutput,
+                    messages=plan_messages,
+                    stage="patch_planning"
+                )
+                if plan_out:
+                    emit("LOG", "PLANNING", f"Patch plan formulated: strategy={plan_out.strategy} ({plan_rec.total_tokens} tokens)")
+                    advisory_context += f"\n\nRecommended Strategy: {plan_out.strategy}\nSafe Pattern: {plan_out.safe_replacement_pattern}"
 
             rem_req = RemediationRequest(
                 repo_path=str(disposable_dir),
@@ -576,7 +677,11 @@ class VerificationPipeline:
                 use_nemotron=req.use_nemotron,
                 advisory_summary=advisory_context
             )
-            remediation_res = await RemediationPatcher.synthesize_remediation(rem_req, workspace_dir=disposable_dir)
+            remediation_res = await RemediationPatcher.synthesize_remediation(
+                rem_req,
+                workspace_dir=disposable_dir,
+                ledger=token_ledger
+            )
 
             if not remediation_res.success:
                 emit("STATE_TRANSITION", "PATCH", f"PATCH REJECTED: {remediation_res.validation_status} ({remediation_res.error})")
@@ -640,7 +745,11 @@ class VerificationPipeline:
                     post_patch_result=empty_post,
                     regression_tests={"passed": False, "test_count": 0, "error": "PATCH_REJECTED"},
                     final_behavioral_verdict=verdict_rec.terminal_state,
-                    structured_evidence=pre_res.structured_evidence,
+                    structured_evidence={
+                        **(pre_res.structured_evidence or {}),
+                        "threat_intel": threat_intel.model_dump() if threat_intel else None,
+                        "token_ledger": token_ledger.get_summary().model_dump() if token_ledger else None
+                    },
                     verdict_record=verdict_rec,
                     environment=env_evidence,
                     sandbox_engine=backend.capabilities.tier.value,
@@ -649,7 +758,9 @@ class VerificationPipeline:
                     isolation_tier=backend.capabilities.tier.value,
                     isolation_attestation=attestation.model_dump(),
                     assurance_level=assurance_level.value,
-                    policy_decision=policy_decision.model_dump()
+                    policy_decision=policy_decision.model_dump(),
+                    threat_intel=threat_intel,
+                    token_ledger=token_ledger.get_summary() if token_ledger else None
                 )
 
             emit("STAGE_COMPLETE", "PATCH", f"Remediation generated via {remediation_res.engine} ({remediation_res.latency_ms}ms)")
@@ -720,31 +831,23 @@ class VerificationPipeline:
 
             # Assemble comprehensive, multi-layer evidence record
             pipeline_evidence = dict(post_res.structured_evidence or pre_res.structured_evidence or {})
-            if tavily_report:
+            if threat_intel:
+                pipeline_evidence["threat_intel"] = threat_intel.model_dump()
                 pipeline_evidence["tavily_threat_intelligence"] = {
                     "provider": "Tavily Search API",
                     "endpoint": "https://api.tavily.com/search",
-                    "status": "HTTP_200_OK" if tavily_report.status_code == 200 else f"HTTP_{tavily_report.status_code}",
-                    "latency_ms": tavily_report.latency_ms,
-                    "query": tavily_report.query,
-                    "raw_results_count": tavily_report.raw_results_count,
-                    "retained_relevant_count": tavily_report.retained_results_count,
-                    "filtered_out_count": tavily_report.filtered_out_count,
-                    "relevance_criterion": f"Must explicitly mention target '{req.cve_id}' in title, URL, or body content",
-                    "retained_sources": [{"title": f.title, "url": f.url} for f in tavily_findings],
-                    "filtered_out_reasons": tavily_report.rejection_reasons
-                }
-            elif tavily_findings:
-                pipeline_evidence["tavily_threat_intelligence"] = {
-                    "provider": "Tavily Search API",
-                    "endpoint": "https://api.tavily.com/search",
-                    "status": "HTTP_200_OK",
-                    "latency_ms": tavily_latency_ms,
-                    "raw_results_count": len(tavily_findings),
-                    "retained_relevant_count": len(tavily_findings),
+                    "status": "HTTP_200_OK" if threat_intel.status != "degraded" else "DEGRADED",
+                    "latency_ms": threat_intel.latency_ms,
+                    "query": threat_intel.query,
+                    "raw_results_count": len(threat_intel.findings),
+                    "retained_relevant_count": len(threat_intel.findings),
                     "filtered_out_count": 0,
-                    "retained_sources": [{"title": f.title, "url": f.url} for f in tavily_findings]
+                    "relevance_criterion": f"Must explicitly mention target '{req.cve_id}' in title, URL, or body content",
+                    "retained_sources": [{"title": f.title, "url": f.url} for f in threat_intel.findings],
+                    "response_hash": threat_intel.response_hash
                 }
+            if token_ledger:
+                pipeline_evidence["token_ledger"] = token_ledger.get_summary().model_dump()
             if remediation_res.engine == "NVIDIA_NEMOTRON_3_ULTRA":
                 pipeline_evidence["nebius_nemotron_inference"] = {
                     "provider": "Nebius Token Factory",
@@ -776,7 +879,9 @@ class VerificationPipeline:
                 isolation_tier=backend.capabilities.tier.value,
                 isolation_attestation=attestation.model_dump(),
                 assurance_level=assurance_level.value,
-                policy_decision=policy_decision.model_dump()
+                policy_decision=policy_decision.model_dump(),
+                threat_intel=threat_intel,
+                token_ledger=token_ledger.get_summary() if token_ledger else None
             )
 
         finally:

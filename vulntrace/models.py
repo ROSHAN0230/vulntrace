@@ -71,6 +71,26 @@ class TavilySearchReport(BaseModel):
     findings: List[PocFinding] = Field(default_factory=list)
     rejection_reasons: List[str] = Field(default_factory=list)
 
+class ThreatIntel(BaseModel):
+    cve_id: str
+    status: str = "ok"  # "ok", "degraded"
+    query: str = ""
+    timestamp: float = 0.0
+    response_hash: str = ""  # SHA-256 of raw search response
+    source_urls: List[str] = Field(default_factory=list)
+    findings: List[PocFinding] = Field(default_factory=list)
+    affected_symbols: List[str] = Field(default_factory=list)
+    fix_patterns: List[str] = Field(default_factory=list)
+    safe_patterns: List[str] = Field(default_factory=list)
+    sink_classes: List[str] = Field(default_factory=list)
+    confidence: float = 1.0
+    raw_findings_count: int = 0
+    retained_findings_count: int = 0
+    rejection_reasons: List[str] = Field(default_factory=list)
+    latency_ms: float = 0.0
+    summary: Optional[str] = None
+    error: Optional[str] = None
+
 class CveQueryRequest(BaseModel):
     cve_id: str
     query_tavily: bool = True
@@ -336,6 +356,52 @@ class FinalVerdictRecord(BaseModel):
     assurance_level: Optional[str] = None
     policy_audit: Optional[Dict[str, Any]] = None
 
+# --- Milestone M4: LLM Tiering & Token Accounting ---
+class LLMCallRecord(BaseModel):
+    call_id: str
+    timestamp: float
+    stage: str
+    model: str
+    tier: str  # "SMALL", "MID", "ULTRA"
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    reasoning_tokens: int = 0
+    total_tokens: int = 0
+    latency_ms: float = 0.0
+    success: bool = True
+    error: Optional[str] = None
+
+class LLMLedgerSummary(BaseModel):
+    total_calls: int = 0
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+    total_reasoning_tokens: int = 0
+    total_tokens: int = 0
+    total_latency_ms: float = 0.0
+    calls: List[LLMCallRecord] = Field(default_factory=list)
+    tier_breakdown: Dict[str, Dict[str, int]] = Field(default_factory=dict)
+    model_breakdown: Dict[str, Dict[str, int]] = Field(default_factory=dict)
+
+class TriageAnalysisOutput(BaseModel):
+    cve_id: str
+    vulnerability_class: str
+    candidate_symbols: List[str] = Field(default_factory=list)
+    rationale: str = ""
+    confidence: float = 1.0
+
+class PatchPlanOutput(BaseModel):
+    target_file: str
+    strategy: str
+    budget_lines: int = 10
+    safe_replacement_pattern: str = ""
+    justification: str = ""
+
+class SurgicalPatchOutput(BaseModel):
+    target_file: str
+    diff_snippet: str = ""
+    explanation: str = ""
+    patched_code: Optional[str] = None
+
 class VerificationPipelineResponse(BaseModel):
     cve_id: str
     repo_path: str
@@ -356,6 +422,8 @@ class VerificationPipelineResponse(BaseModel):
     isolation_attestation: Optional[Dict[str, Any]] = None
     assurance_level: Optional[str] = None
     policy_decision: Optional[Dict[str, Any]] = None
+    threat_intel: Optional[ThreatIntel] = None
+    token_ledger: Optional[LLMLedgerSummary] = None
 
 # --- Streaming Pipeline Event ---
 class PipelineEvent(BaseModel):
