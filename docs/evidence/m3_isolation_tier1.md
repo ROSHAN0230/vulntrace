@@ -3,9 +3,9 @@
 **Milestone:** M3 — Isolation Tier 1: Rootless Container Isolation & Adversarial Containment Proofs  
 **Specification Reference:** `VULNTRACE_STUDIO_SPEC.md` §4.6, §4.14, and Milestone M3 Acceptance Criteria  
 **Audit Date:** 2026-10-06  
-**Container & Conformance Test Suite:** **38 / 38 PASSED** (55.73s)  
-**Host & Non-Container Test Suite:** **128 / 128 PASSED** (265.28s)  
-**Total Verified Tests:** **166 / 166 PASSED** (0 failures, 0 errors)  
+**Container & Conformance Test Suite:** **41 / 41 PASSED** (62.70s)  
+**Host & Non-Container Test Suite:** **128 / 128 PASSED** (269.06s)  
+**Total Verified Tests:** **169 / 169 PASSED** (0 failures, 0 errors)  
 **Linter Status:** `ruff check vulntrace/ tests/` — **All checks passed! (0 errors)**  
 
 ---
@@ -29,8 +29,8 @@ Under M3:
 3. **Tier 0 Explicitly Degraded & Refuses Untrusted Input:**
    - `LocalSubprocessBackend` strictly refuses non-curated repository inputs with `PermissionError` unless explicitly overridden via `unsafe_local=True` or `--unsafe-local`.
    - Attestation runtime engine explicitly identifies as `(DEGRADED_TIER_0)`.
-4. **Adversarial Containment Proof Suite:** 14 tests in `tests/test_tier1_isolation.py` prove all 8 containment conditions and verifier 3/3 RED / 3/3 GREEN execution under Tier 1.
-5. **Real Execution Failures Caught & Fixed:** Caught and resolved 4 critical runtime integration bugs (WSL2 container leak on timeout, WSL drvfs pytest cache write crash, WSL drvfs copystat build crash, and timeout vs OOM exit code collision).
+4. **Adversarial Containment Proof Suite:** 17 tests in `tests/test_tier1_isolation.py` prove all 8 containment conditions, Tier 0 refusal, build redirection, attestation preservation, and verifier 3/3 RED / 3/3 GREEN execution under Tier 1.
+5. **Real Execution Failures Caught & Fixed:** Caught and resolved 7 critical runtime integration bugs across Podman timeout leaks, drvfs file permissions, setuptools egg-base build paths, factory permission scoping, pipeline tier masking, and real-world eval dependency environments.
 
 ---
 
@@ -52,7 +52,7 @@ Under M3:
 
 ## 3. Real Execution Failures Caught and Fixed
 
-During implementation and live execution against the rootless Podman/WSL2 substrate, four real execution failures were caught and resolved:
+During implementation and live execution against the rootless Podman/WSL2 substrate, seven real execution failures were caught and resolved:
 
 ### 1. WSL2 Orphaned Container Leak on Subprocess Timeout
 - **Symptom:** When a harness timed out, calling `proc.kill()` on the host Windows `wsl.exe` process terminated the Windows pipe, but the background Podman container in WSL2 continued executing indefinitely as an orphan.
@@ -68,16 +68,31 @@ During implementation and live execution against the rootless Podman/WSL2 substr
 - **Root Cause:** WSL2 drvfs file system mounts (mapping `C:\` into Linux) do not permit unprivileged Linux UID 1000 to alter metadata or set ownership on `.pytest_cache` folders created by root or Windows.
 - **Resolution:** Added `-p no:cacheprovider` to container pytest command lines in `run_regression_suite`, suppressing `.pytest_cache` writes in workspace directories.
 
-### 3. WSL Drvfs `copystat` Crash During `setup.py build`
-- **Symptom:** In-container `setup.py build` crashed with `shutil.Error: [Errno 1] Operation not permitted` during `copystat` on `/workspace/build`.
-- **Root Cause:** `setuptools` build step attempts `chmod` / `copystat` on compiled build artifacts when writing to `/workspace/build`. Under drvfs mounts, user 1000:1000 cannot change permissions on Windows-backed files.
-- **Resolution:** Redirected setuptools build targets to the ephemeral Linux tmpfs scratch directory:
-  `python3 setup.py build --build-base /tmp/build --build-lib /tmp/build/lib`
+### 3. WSL Drvfs `copystat` and `egg_info` Crash During `setup.py build`
+- **Symptom:** In-container `setup.py build` crashed with `shutil.Error: [Errno 1] Operation not permitted` during `copystat` on `/workspace/build` and `error: [Errno 1] Operation not permitted: '/workspace/flasgger.egg-info/tmp...'`.
+- **Root Cause:** `setuptools` build step attempts `chmod` / `copystat` on compiled build artifacts when writing to `/workspace/build`, and writes egg-info metadata into `/workspace`. Under drvfs mounts, user 1000:1000 cannot change permissions on Windows-backed files.
+- **Resolution:** Redirected setuptools build targets and egg metadata to the ephemeral Linux tmpfs scratch directory:
+  `python3 setup.py build --build-base /tmp/build --build-lib /tmp/build/lib egg_info --egg-base /tmp`
 
 ### 4. Timeout vs. OOM Kill Exit Code Collision
 - **Symptom:** Both memory exhaustion and timeout watchdog executions mapped to exit code -9 / `TIMED_OUT`.
 - **Root Cause:** Podman wrapper initially conflated exit code 137 (standard Linux `SIGKILL` / cgroups OOM kill) with timeout termination.
 - **Resolution:** Podman native crun timeout watchdog exits with code `255`. Isolated exit code 255 for timeout handling, preserving exit code `137` for cgroups OOM kill.
+
+### 5. BackendFactory Fallback Permission Loophole
+- **Symptom:** When `BackendFactory.resolve_best_available_backend()` was called without specifying `target_repo`, fallback resolution returned `LocalSubprocessBackend(unsafe_local=True)`, permanently unlocking the instance and allowing uncontained execution on arbitrary repos later.
+- **Root Cause:** Curation check `if repo_path and not is_curated:` evaluated to false when `repo_path` was `None`, hitting the fallback which hardcoded `unsafe_local=True`.
+- **Resolution:** Updated fallback instantiation to pass `unsafe_local=effective_unsafe`, preventing accidental uncontained execution on subsequently loaded non-curated targets.
+
+### 6. Pipeline Isolation Tier Masking on Patch Rejection
+- **Symptom:** In `VerificationPipeline.run_pipeline()`, when a proposed remediation patch was rejected by AST anti-gaming gates, `sandbox_engine` was hardcoded to `SubprocessSandboxRunner.ENGINE_LABEL` ("LOCAL_SUBPROCESS_FALLBACK") and omitted `isolation_tier` and `isolation_attestation`.
+- **Root Cause:** Early-return path for rejected patches was written prior to backend abstraction refactoring.
+- **Resolution:** Dynamically populated `sandbox_engine=backend.capabilities.tier.value`, `isolation_tier=backend.capabilities.tier.value`, and preserved parent-validated `isolation_attestation`.
+
+### 7. Real-World Evaluation Dependency Environment Decoupling
+- **Symptom:** `real_world_eval/run_eval.py` failed CASE-RW-01 with `UNEXPECTED_FAILURE` (`ModuleNotFoundError: No module named 'jsonschema'`) when defaulted to container tier.
+- **Root Cause:** Flasgger's target dependencies were provisioned into a host virtual environment by `EnvironmentBuilder` (Milestone M2), which is unavailable inside an offline container (`--network none`).
+- **Resolution:** Explicitly configured CASE-RW-01 to execute under `LOCAL_SUBPROCESS_FALLBACK` with `unsafe_local=True` (faithfully testing the M2 EnvironmentBuilder), while CASE-RW-04 executes end-to-end under `OCI_CONTAINER_ISOLATED` (Tier 1).
 
 ---
 
@@ -98,24 +113,27 @@ rootdir: C:\AI-Tools\vulntrace
 configfile: pyproject.toml
 plugins: anyio-4.15.1, asyncio-1.4.0
 asyncio: mode=Mode.STRICT, debug=False
-collected 14 items
+collected 17 items
 
-tests/test_tier1_isolation.py::TestAdversarialTier1Isolation::test_adversarial_outbound_network_denied PASSED [  7%]
-tests/test_tier1_isolation.py::TestAdversarialTier1Isolation::test_adversarial_host_filesystem_and_readonly_root_fs PASSED [ 14%]
-tests/test_tier1_isolation.py::TestAdversarialTier1Isolation::test_adversarial_fork_process_explosion_contained PASSED [ 21%]
-tests/test_tier1_isolation.py::TestAdversarialTier1Isolation::test_adversarial_memory_exhaustion_contained PASSED [ 28%]
-tests/test_tier1_isolation.py::TestAdversarialTier1Isolation::test_adversarial_timeout_watchdog_kills_descendants PASSED [ 35%]
-tests/test_tier1_isolation.py::TestAdversarialTier1Isolation::test_adversarial_host_credentials_unavailable PASSED [ 42%]
-tests/test_tier1_isolation.py::TestAdversarialTier1Isolation::test_adversarial_child_telemetry_cannot_forge_isolation_claims PASSED [ 50%]
-tests/test_tier1_isolation.py::TestAdversarialTier1Isolation::test_adversarial_workspace_isolation_and_ephemeral_tmpfs PASSED [ 57%]
-tests/test_tier1_isolation.py::TestTier0RefusalAndBackendFactory::test_tier0_refuses_non_curated_repo_without_unsafe_local PASSED [ 64%]
-tests/test_tier1_isolation.py::TestTier0RefusalAndBackendFactory::test_tier0_allows_curated_fixture PASSED [ 71%]
-tests/test_tier1_isolation.py::TestTier0RefusalAndBackendFactory::test_tier0_allows_non_curated_with_explicit_unsafe_local PASSED [ 78%]
-tests/test_tier1_isolation.py::TestTier0RefusalAndBackendFactory::test_backend_factory_resolves_tier1_for_non_curated_repo PASSED [ 85%]
-tests/test_tier1_isolation.py::TestVerifierAntiGamingUnderTier1::test_anti_gaming_verifier_red_reproduction_3x PASSED [ 92%]
-tests/test_tier1_isolation.py::TestVerifierAntiGamingUnderTier1::test_anti_gaming_verifier_green_remediation_3x PASSED [100%]
+tests/test_tier1_isolation.py::TestAdversarialTier1Isolation::test_adversarial_outbound_network_denied PASSED [  5%]
+tests/test_tier1_isolation.py::TestAdversarialTier1Isolation::test_adversarial_host_filesystem_and_readonly_root_fs PASSED [ 11%]
+tests/test_tier1_isolation.py::TestAdversarialTier1Isolation::test_adversarial_fork_process_explosion_contained PASSED [ 17%]
+tests/test_tier1_isolation.py::TestAdversarialTier1Isolation::test_adversarial_memory_exhaustion_contained PASSED [ 23%]
+tests/test_tier1_isolation.py::TestAdversarialTier1Isolation::test_adversarial_timeout_watchdog_kills_descendants PASSED [ 29%]
+tests/test_tier1_isolation.py::TestAdversarialTier1Isolation::test_adversarial_host_credentials_unavailable PASSED [ 35%]
+tests/test_tier1_isolation.py::TestAdversarialTier1Isolation::test_adversarial_child_telemetry_cannot_forge_isolation_claims PASSED [ 41%]
+tests/test_tier1_isolation.py::TestAdversarialTier1Isolation::test_adversarial_workspace_isolation_and_ephemeral_tmpfs PASSED [ 47%]
+tests/test_tier1_isolation.py::TestTier0RefusalAndBackendFactory::test_tier0_refuses_non_curated_repo_without_unsafe_local PASSED [ 52%]
+tests/test_tier1_isolation.py::TestTier0RefusalAndBackendFactory::test_tier0_allows_curated_fixture PASSED [ 58%]
+tests/test_tier1_isolation.py::TestTier0RefusalAndBackendFactory::test_tier0_allows_non_curated_with_explicit_unsafe_local PASSED [ 64%]
+tests/test_tier1_isolation.py::TestTier0RefusalAndBackendFactory::test_backend_factory_resolves_tier1_for_non_curated_repo PASSED [ 70%]
+tests/test_tier1_isolation.py::TestTier0RefusalAndBackendFactory::test_backend_factory_unspecified_repo_does_not_unlock_tier0 PASSED [ 76%]
+tests/test_tier1_isolation.py::TestVerifierAntiGamingUnderTier1::test_anti_gaming_verifier_red_reproduction_3x PASSED [ 82%]
+tests/test_tier1_isolation.py::TestVerifierAntiGamingUnderTier1::test_anti_gaming_verifier_green_remediation_3x PASSED [ 88%]
+tests/test_tier1_isolation.py::TestVerifierAntiGamingUnderTier1::test_container_backend_setup_py_egg_base_build PASSED [ 94%]
+tests/test_tier1_isolation.py::TestVerifierAntiGamingUnderTier1::test_pipeline_preserves_tier1_engine_and_tier_on_patch_rejection PASSED [100%]
 
-============================= 14 passed in 23.47s =============================
+============================= 17 passed in 33.15s =============================
 ```
 
 ### Detailed Breakdown per Acceptance Criterion:
@@ -179,17 +197,17 @@ tests/test_tier1_isolation.py::TestVerifierAntiGamingUnderTier1::test_anti_gamin
 
 ## 5. Full Regression & Conformance Suite Records
 
-### Container & Conformance Suite (38 tests)
+### Container & Conformance Suite (41 tests)
 ```powershell
 .\.venv\Scripts\pytest -v tests/test_tier1_isolation.py tests/test_container_backend.py tests/test_backend_conformance.py
 ```
-**Result:** `38 passed in 55.73s`
+**Result:** `41 passed in 62.70s (0:01:02)`
 
 ### Non-Container Host Regression Suite (128 tests)
 ```powershell
 .\.venv\Scripts\pytest -v -m "not container" tests/
 ```
-**Result:** `128 passed, 35 deselected in 265.28s (0:04:25)`
+**Result:** `128 passed, 38 deselected in 269.06s (0:04:29)`
 
 ### Linter Check
 ```powershell

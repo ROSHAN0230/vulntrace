@@ -38,7 +38,6 @@ async def main():
             if evt.event_type in ["STATE_TRANSITION", "STAGE_START", "STAGE_COMPLETE"]:
                 print(f"  [{evt.stage}] {evt.message}")
         
-        t0 = asyncio.get_event_loop().time()
         res = await VerificationPipeline.run_pipeline(req, on_event=log_event)
         
         entry = {
@@ -56,10 +55,12 @@ async def main():
             "post_patch_state": res.post_patch_result.reproduction_state,
             "regression_passed": res.regression_tests.get("passed", False),
             "regression_test_count": res.regression_tests.get("test_count", 0),
+            "isolation_tier": res.isolation_tier,
+            "sandbox_engine": res.sandbox_engine,
             "latency_ms": res.total_pipeline_ms
         }
         summary.append(entry)
-        print(f"-> Result: Reachability={res.reachability_verdict} | Behavioral={res.final_behavioral_verdict} | Engine={res.remediation.engine} | Regressions={res.regression_tests.get('passed')} ({res.regression_tests.get('test_count')} tests) in {res.total_pipeline_ms}ms")
+        print(f"-> Result: Reachability={res.reachability_verdict} | Behavioral={res.final_behavioral_verdict} | Tier={res.isolation_tier} | Engine={res.remediation.engine} | Regressions={res.regression_tests.get('passed')} ({res.regression_tests.get('test_count')} tests) in {res.total_pipeline_ms}ms")
     
     print("\n" + "=" * 70)
     print("BENCHMARK SUITE EXECUTION SUMMARY")

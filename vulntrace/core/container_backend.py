@@ -208,7 +208,9 @@ class ContainerExecutionBackend(ExecutionBackend):
                 self.IMAGE_NAME,
                 "python3", "setup.py", "build",
                 "--build-base", "/tmp/build",
-                "--build-lib", "/tmp/build/lib"
+                "--build-lib", "/tmp/build/lib",
+                "egg_info",
+                "--egg-base", "/tmp"
             ]
 
             try:

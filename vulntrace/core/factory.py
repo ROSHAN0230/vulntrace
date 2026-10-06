@@ -94,4 +94,4 @@ class BackendFactory:
         logger.info(
             "BackendFactory: Selecting LOCAL_SUBPROCESS_FALLBACK for curated fixture."
         )
-        return LocalSubprocessBackend(unsafe_local=True)
+        return LocalSubprocessBackend(unsafe_local=effective_unsafe)

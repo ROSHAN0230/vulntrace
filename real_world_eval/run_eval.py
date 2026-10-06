@@ -49,6 +49,7 @@ async def evaluate_flasgger_vulnerable() -> Dict[str, Any]:
             target_file="flasgger/utils.py",
             target_function="parse_docstring",
             execution_backend="LOCAL_SUBPROCESS_FALLBACK",
+            unsafe_local=True,
             use_nemotron=True,
         )
         pipeline_res = await VerificationPipeline.run_pipeline(pipeline_req)
@@ -74,6 +75,8 @@ async def evaluate_flasgger_vulnerable() -> Dict[str, Any]:
             "post_patch_behavioral_result": pipeline_res.post_patch_result.reproduction_state if pipeline_res.post_patch_result else "SKIPPED",
             "regression_result": "SKIPPED (Pre-patch verification inconclusive; remediation skipped)",
             "final_verdict": pipeline_res.final_behavioral_verdict,
+            "isolation_tier": pipeline_res.isolation_tier or pipeline_res.sandbox_engine,
+            "sandbox_engine": pipeline_res.sandbox_engine,
             "limitations": pipeline_res.verdict_record.reason if pipeline_res.verdict_record else "Target environment PyYAML 5.4 runtime blocks constructor before code execution on Python 3.10."
         }
     finally:
@@ -113,6 +116,8 @@ async def evaluate_flasgger_patched() -> Dict[str, Any]:
             "post_patch_behavioral_result": "SKIPPED",
             "regression_result": "NOT_REQUIRED",
             "final_verdict": "NO_VULNERABILITIES_FOUND",
+            "isolation_tier": "NOT_EXECUTED (STATIC_ANALYSIS)",
+            "sandbox_engine": "STATIC_ANALYSIS",
             "limitations": "None. AST analysis deterministically proves the absence of the vulnerable symbol."
         }
     finally:
@@ -151,6 +156,8 @@ async def evaluate_cookiecutter_false_positive() -> Dict[str, Any]:
         "post_patch_behavioral_result": "SKIPPED",
         "regression_result": "NOT_REQUIRED",
         "final_verdict": "UNREACHABLE_FALSE_POSITIVE",
+        "isolation_tier": "NOT_EXECUTED (STATIC_ANALYSIS)",
+        "sandbox_engine": "STATIC_ANALYSIS",
         "limitations": "AST reachability verifies direct static imports and calls. It does not verify dynamic plugin hooks that might invoke PyYAML at runtime."
     }
 
@@ -198,12 +205,14 @@ async def evaluate_cloud_config_remediated() -> Dict[str, Any]:
         "post_patch_behavioral_result": pipeline_res.post_patch_result.reproduction_state if pipeline_res.post_patch_result else "SKIPPED",
         "regression_result": f"PASSED ({pipeline_res.regression_tests.get('test_count', 0)} tests)",
         "final_verdict": pipeline_res.final_behavioral_verdict,
+        "isolation_tier": pipeline_res.isolation_tier or pipeline_res.sandbox_engine,
+        "sandbox_engine": pipeline_res.sandbox_engine,
         "differential_proof": {
             "pre_patch": "RED_STATE_REPRODUCED (Exit 0, sentinel created)",
             "post_patch": "GREEN_STATE_BLOCKED (Exit 42, parent verified clean disk)",
             "regressions": "4/4 tests passed"
         },
-        "limitations": "Proves defense against evaluated exploit payload in isolated local execution."
+        "limitations": "Proves defense against evaluated exploit payload under verified execution tier."
     }
 
 async def main():

@@ -1,5 +1,3 @@
-import pytest
-import os
 from service.custom_loader import parse_app_config
 
 def test_standard_yaml():

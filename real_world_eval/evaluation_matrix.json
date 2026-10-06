@@ -37,6 +37,8 @@
       "post_patch_behavioral_result": "GREEN_STATE_BLOCKED",
       "regression_result": "SKIPPED (Pre-patch verification inconclusive; remediation skipped)",
       "final_verdict": "INCONCLUSIVE",
+      "isolation_tier": "LOCAL_SUBPROCESS_FALLBACK",
+      "sandbox_engine": "LOCAL_SUBPROCESS_FALLBACK",
       "limitations": "Pre-patch verification was inconclusive: the unpatched runtime or defensive guard already blocked the exploit probe, preventing reproduction of a red state in this environment."
     },
     {
@@ -60,6 +62,8 @@
       "post_patch_behavioral_result": "SKIPPED",
       "regression_result": "NOT_REQUIRED",
       "final_verdict": "NO_VULNERABILITIES_FOUND",
+      "isolation_tier": "NOT_EXECUTED (STATIC_ANALYSIS)",
+      "sandbox_engine": "STATIC_ANALYSIS",
       "limitations": "None. AST analysis deterministically proves the absence of the vulnerable symbol."
     },
     {
@@ -83,13 +87,15 @@
       "post_patch_behavioral_result": "SKIPPED",
       "regression_result": "NOT_REQUIRED",
       "final_verdict": "UNREACHABLE_FALSE_POSITIVE",
+      "isolation_tier": "NOT_EXECUTED (STATIC_ANALYSIS)",
+      "sandbox_engine": "STATIC_ANALYSIS",
       "limitations": "AST reachability verifies direct static imports and calls. It does not verify dynamic plugin hooks that might invoke PyYAML at runtime."
     },
     {
       "case_id": "CASE-RW-04",
       "category": "CASE A (Reachable -> Reproduced -> Remediated -> Verified -> Regressions Pass)",
       "repository": "Independent Microservice: repo_cloud_config",
-      "commit_or_version": "dc5327f (Initial service commit)",
+      "commit_or_version": "406855c (Initial service commit)",
       "advisory_cve": "CVE-2020-14343",
       "dependency_version": "PyYAML ==5.3.1",
       "source_of_metadata": "OSV.dev + NVD",
@@ -111,24 +117,26 @@
         "changed_functions": [
           "yaml.load"
         ],
-        "additions_count": 4,
-        "deletions_count": 4,
-        "total_lines_changed": 8,
-        "diff_bytes": 804,
+        "additions_count": 3,
+        "deletions_count": 3,
+        "total_lines_changed": 6,
+        "diff_bytes": 573,
         "is_minimal": true,
-        "minimality_criterion": "Minimal: 8 lines across 1 file(s) (threshold: <= 10 lines, 1 file)",
+        "minimality_criterion": "Minimal: 6 lines across 1 file(s) (threshold: <= 10 lines, 1 file)",
         "tests_affected_count": 0,
         "reason_for_change": "Synthesized surgical remediation using Nemotron 3 Ultra."
       },
       "post_patch_behavioral_result": "GREEN_STATE_BLOCKED",
       "regression_result": "PASSED (4 tests)",
       "final_verdict": "GREEN_STATE_VERIFIED",
+      "isolation_tier": "OCI_CONTAINER_ISOLATED",
+      "sandbox_engine": "OCI_CONTAINER_ISOLATED",
       "differential_proof": {
         "pre_patch": "RED_STATE_REPRODUCED (Exit 0, sentinel created)",
         "post_patch": "GREEN_STATE_BLOCKED (Exit 42, parent verified clean disk)",
         "regressions": "4/4 tests passed"
       },
-      "limitations": "Proves defense against evaluated exploit payload in isolated local execution."
+      "limitations": "Proves defense against evaluated exploit payload under verified execution tier."
     }
   ]
 }

@@ -26,6 +26,8 @@ from vulntrace.core.local_backend import LocalSubprocessBackend
 from vulntrace.core.factory import BackendFactory
 from vulntrace.verifier.runner import AntiGamingVerifier
 from vulntrace.sinks.deserialization import YamlDeserializationOracle
+from vulntrace.sandbox.pipeline import VerificationPipeline
+from vulntrace.models import VerificationPipelineRequest
 
 BENCHMARK_DIR = Path(__file__).resolve().parent.parent / "benchmarks" / "contextual_reasoning"
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "sample_repo"
@@ -203,8 +205,9 @@ class TestAdversarialTier1Isolation:
 
             res = await container_backend.execute_script(ws_id, "adv_memory.py", timeout=10.0)
             assert "MEMORY_HOG_SUCCEEDED" not in res.stdout
-            # OOM kill causes exit code 137 or MemoryError
-            assert res.exit_code in (137, 1, 0)
+            # OOM kill causes exit code 137 or MemoryError (exit 1)
+            assert res.exit_code in (137, 1)
+            assert res.exit_code != 0
         finally:
             await container_backend.cleanup_workspace(ws_id)
 
@@ -234,10 +237,11 @@ class TestAdversarialTier1Isolation:
             assert res.exit_code == -9
             assert res.reproduction_state == "TIMED_OUT"
 
-            # Verify no orphan containers left running in Podman
+            # Verify no orphan containers left running in Podman (portable across Windows WSL and Linux)
             import subprocess
+            cmd_ps = container_backend._build_cli_prefix() + ["podman", "ps", "--filter", "name=vulntrace-exec"]
             proc_ps = subprocess.run(
-                ["wsl", "-d", "Ubuntu", "podman", "ps", "--filter", "name=vulntrace-exec"],
+                cmd_ps,
                 capture_output=True,
                 text=True
             )
@@ -421,6 +425,34 @@ class TestTier0RefusalAndBackendFactory:
         assert resolved.capabilities.read_only_rootfs is True
         assert resolved.capabilities.network_kernel_denied is True
 
+    @pytest.mark.asyncio
+    async def test_backend_factory_unspecified_repo_does_not_unlock_tier0(self):
+        """BackendFactory resolving Tier 0 without target_repo must not unlock unsafe_local."""
+        if not FLASGGER_DIR.exists():
+            pytest.skip("Flasgger submodule not present.")
+
+        old_ci = os.environ.pop("CI", None)
+        old_unsafe = os.environ.pop("VULNTRACE_UNSAFE_LOCAL", None)
+
+        try:
+            # Resolve Tier 0 backend without target_repo specified
+            backend = BackendFactory.resolve_best_available_backend(
+                force_tier=IsolationTier.LOCAL_SUBPROCESS_FALLBACK,
+                unsafe_local=False
+            )
+            # Must remain locked (unsafe_local=False)
+            assert getattr(backend, "unsafe_local", False) is False
+
+            # Subsequent attempt to initialize non-curated repo must be refused
+            with pytest.raises(PermissionError) as exc_info:
+                await backend.initialize_workspace(FLASGGER_DIR)
+            assert "refused non-curated repository" in str(exc_info.value)
+        finally:
+            if old_ci is not None:
+                os.environ["CI"] = old_ci
+            if old_unsafe is not None:
+                os.environ["VULNTRACE_UNSAFE_LOCAL"] = old_unsafe
+
 
 class TestVerifierAntiGamingUnderTier1:
     """Verifies that the AntiGamingVerifier functions correctly under Tier 1."""
@@ -494,3 +526,67 @@ class TestVerifierAntiGamingUnderTier1:
             assert "Confirmed GREEN 3/3" in reason
         finally:
             await container_backend.cleanup_workspace(ws_id)
+
+    @pytest.mark.asyncio
+    async def test_container_backend_setup_py_egg_base_build(self, container_backend):
+        """Proves setup.py build succeeds with egg-base redirected to tmpfs on drvfs."""
+        ws_id = await container_backend.initialize_workspace(FIXTURE_DIR)
+        ws_path = Path(ws_id)
+
+        try:
+            # Write a setup.py that uses setuptools and generates egg-info
+            setup_py = ws_path / "setup.py"
+            setup_py.write_text(
+                "from setuptools import setup, find_packages\n"
+                "setup(name='test_pkg', version='0.1.0', packages=find_packages())\n",
+                encoding="utf-8"
+            )
+
+            res = await container_backend.provision_dependencies(ws_id, manifest_dependencies=[])
+            assert res.exit_code == 0
+            assert res.parent_validated is True
+            assert "setup.py built under isolated container tier" in (res.validation_notes or "")
+        finally:
+            await container_backend.cleanup_workspace(ws_id)
+
+    @pytest.mark.asyncio
+    async def test_pipeline_preserves_tier1_engine_and_tier_on_patch_rejection(self, container_backend):
+        """Proves VerificationPipeline preserves Tier 1 engine and attestation when patch is rejected."""
+        req = VerificationPipelineRequest(
+            repo_path=str(FIXTURE_DIR),
+            cve_id="CVE-2020-14343",
+            target_file="service.py",
+            target_function="load_user_config",
+            vulnerable_symbol="yaml.load",
+            use_nemotron=False,
+            query_tavily=False,
+            execution_backend="OCI_CONTAINER_ISOLATED"
+        )
+
+        from unittest.mock import patch
+        from vulntrace.models import RemediationResponse
+
+        # Force remediation to fail (patch rejection)
+        rejected_rem = RemediationResponse(
+            cve_id=req.cve_id,
+            target_file="service.py",
+            engine="TEST_REJECTED",
+            diff="",
+            explanation="Deliberately rejected patch for tier metadata audit.",
+            latency_ms=1.0,
+            success=False,
+            validation_status="REJECTED_DENYLIST_VIOLATION",
+            error="Denylist violation injected"
+        )
+
+        with patch("vulntrace.agent.patcher.RemediationPatcher.synthesize_remediation", return_value=rejected_rem):
+            res = await VerificationPipeline.run_pipeline(req=req, backend=container_backend)
+            assert res.remediation.success is False
+            assert res.final_behavioral_verdict == "PATCH_REJECTED"
+            # Critical: sandbox_engine and isolation_tier must NOT report Tier 0
+            assert res.sandbox_engine == "OCI_CONTAINER_ISOLATED"
+            assert res.isolation_tier == "OCI_CONTAINER_ISOLATED"
+            assert res.post_patch_result.sandbox_engine == "OCI_CONTAINER_ISOLATED"
+            assert res.isolation_attestation is not None
+            assert res.isolation_attestation["backend_tier"] == "OCI_CONTAINER_ISOLATED"
+

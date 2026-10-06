@@ -14,7 +14,9 @@
     "post_patch_state": "GREEN_STATE_BLOCKED",
     "regression_passed": true,
     "regression_test_count": 2,
-    "latency_ms": 3057.91
+    "isolation_tier": "OCI_CONTAINER_ISOLATED",
+    "sandbox_engine": "OCI_CONTAINER_ISOLATED",
+    "latency_ms": 11288.69
   },
   {
     "id": "unreachable_dead_code",
@@ -31,7 +33,9 @@
     "post_patch_state": "UNREACHABLE_FALSE_POSITIVE",
     "regression_passed": true,
     "regression_test_count": 2,
-    "latency_ms": 1081.35
+    "isolation_tier": "OCI_CONTAINER_ISOLATED",
+    "sandbox_engine": "OCI_CONTAINER_ISOLATED",
+    "latency_ms": 1715.76
   },
   {
     "id": "regression_sensitive",
@@ -44,11 +48,13 @@
     "behavioral_match": true,
     "pre_patch_state": "RED_STATE_REPRODUCED",
     "remediation_engine": "NVIDIA_NEMOTRON_3_ULTRA",
-    "remediation_diff": "--- a/service/parser.py\n+++ b/service/parser.py\n@@ -8,8 +8,8 @@\n     \"\"\"\n     if not raw_text or not isinstance(raw_text, str):\n         raise ValueError(\"Invalid manifest text\")\n-    # Vulnerable sink (CVE-2020-14343)\n-    parsed = yaml.load(raw_text, Loader=yaml.Loader)\n+    # Fixed: Use SafeLoader to prevent arbitrary code execution (CVE-2020-14343)\n+    parsed = yaml.load(raw_text, Loader=yaml.SafeLoader)\n     if not isinstance(parsed, dict):\n         raise ValueError(\"Manifest must evaluate to a dictionary\")\n-    return parsed\n+    return parsed",
+    "remediation_diff": "--- a/service/parser.py\n+++ b/service/parser.py\n@@ -8,8 +8,8 @@\n     \"\"\"\n     if not raw_text or not isinstance(raw_text, str):\n         raise ValueError(\"Invalid manifest text\")\n-    # Vulnerable sink (CVE-2020-14343)\n-    parsed = yaml.load(raw_text, Loader=yaml.Loader)\n+    # Fixed: use safe_load to prevent arbitrary code execution (CVE-2020-14343)\n+    parsed = yaml.safe_load(raw_text)\n     if not isinstance(parsed, dict):\n         raise ValueError(\"Manifest must evaluate to a dictionary\")\n-    return parsed\n+    return parsed",
     "post_patch_state": "GREEN_STATE_BLOCKED",
     "regression_passed": true,
     "regression_test_count": 3,
-    "latency_ms": 3356.71
+    "isolation_tier": "OCI_CONTAINER_ISOLATED",
+    "sandbox_engine": "OCI_CONTAINER_ISOLATED",
+    "latency_ms": 9052.41
   },
   {
     "id": "inconclusive_guard",
@@ -65,6 +71,8 @@
     "post_patch_state": "INCONCLUSIVE",
     "regression_passed": true,
     "regression_test_count": 2,
-    "latency_ms": 1238.24
+    "isolation_tier": "OCI_CONTAINER_ISOLATED",
+    "sandbox_engine": "OCI_CONTAINER_ISOLATED",
+    "latency_ms": 5236.71
   }
 ]

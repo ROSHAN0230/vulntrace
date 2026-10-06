@@ -33,7 +33,6 @@ from vulntrace.models import (
     EnvironmentEvidence,
     FinalVerdictRecord
 )
-from vulntrace.sandbox.runner import SubprocessSandboxRunner
 from vulntrace.sandbox.target_env import TargetEnvironmentManager
 from vulntrace.core.backend import ExecutionBackend, IsolationTier
 from vulntrace.core.factory import BackendFactory
@@ -590,7 +589,7 @@ class VerificationPipeline:
                     reproduction_state="PATCH_REJECTED",
                     parent_validated=False,
                     validation_notes=f"Remediation patch rejected: {remediation_res.validation_status}",
-                    sandbox_engine=SubprocessSandboxRunner.ENGINE_LABEL,
+                    sandbox_engine=backend.capabilities.tier.value,
                     disposable_dir=str(disposable_dir)
                 )
 
@@ -643,9 +642,14 @@ class VerificationPipeline:
                     final_behavioral_verdict=verdict_rec.terminal_state,
                     structured_evidence=pre_res.structured_evidence,
                     verdict_record=verdict_rec,
-                    sandbox_engine=SubprocessSandboxRunner.ENGINE_LABEL,
+                    environment=env_evidence,
+                    sandbox_engine=backend.capabilities.tier.value,
                     cloud_status="PERMISSION_DENIED (HTTP 403)",
-                    total_pipeline_ms=round(dt_total, 2)
+                    total_pipeline_ms=round(dt_total, 2),
+                    isolation_tier=backend.capabilities.tier.value,
+                    isolation_attestation=attestation.model_dump(),
+                    assurance_level=assurance_level.value,
+                    policy_decision=policy_decision.model_dump()
                 )
 
             emit("STAGE_COMPLETE", "PATCH", f"Remediation generated via {remediation_res.engine} ({remediation_res.latency_ms}ms)")
