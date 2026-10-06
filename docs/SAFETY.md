@@ -26,6 +26,11 @@ VulnTrace defines a strictly tiered execution model:
 | **Tier 1** | `ContainerExecutionBackend` (Rootless Podman / crun OCI container in WSL2/Linux) | **Default execution tier for all real-world / non-curated repositories.** | **Kernel-enforced denial:** `--network none`. Network stack unmapped. | **Read-only root FS:** `--read-only`. Ephemeral tmpfs `/tmp` (64MB). Disposable workspace mounted at `/workspace:rw`. | **Unprivileged user:** `--user 1000:1000`. Capabilities dropped: `--cap-drop ALL`, `--security-opt no-new-privileges`. Limits: 512MB RAM, 1.0 CPU, 128 PIDs, wall-clock watchdog. |
 | **Tier 2** | Remote Cloud Sandbox (Serverless ephemeral microVM / cloud worker) | Future extension (Spec §4.6 Tier 2). | Fully isolated VPC with egress filter. | Ephemeral disk volume destroyed on termination. | Dedicated ephemeral microVM. |
 
+> **Benchmark Boundary Disclosure (Spec §4.6 / Decision D3 / Option B):**
+> - **CASE-RW-01 (Flasgger):** Executed under **Tier 0** (`LOCAL_SUBPROCESS_FALLBACK`) with explicit `--unsafe-local` override specifically to validate host virtualenv creation and legacy Python 3.10 syntax support (**Milestone M2 Environment-Builder Compatibility Test**). It was **not** isolated under Tier 1.
+> - **CASE-RW-04 (Cloud Config Service):** Executed end-to-end under **Tier 1** (`OCI_CONTAINER_ISOLATED`), demonstrating full rootless container isolation with kernel network denial, read-only rootfs, tmpfs scratch, and unprivileged user execution.
+> - By default, all non-curated repositories refuse Tier 0 execution and mandate Tier 1 isolation.
+
 ---
 
 ## 3. Tier 1 Rootless Container Hardening Specifications
@@ -86,6 +91,10 @@ Tier 0 (`LocalSubprocessBackend`) executes harnesses directly on the host operat
 3. **Honest Labeling & Attestation:**
    - Tier 0 attestation explicitly brands runtime engines as `(DEGRADED_TIER_0)`.
    - Documentation and UI disclose: "Process executes under ambient host OS user identity without OS user separation. Network isolation is cooperative."
+4. **Benchmark Testing Context (CASE-RW-01 vs CASE-RW-04):**
+   - The `--unsafe-local` override is exercised in the real-world evaluation matrix exclusively for `CASE-RW-01` to test the host-based `EnvironmentBuilder` pipeline on legacy Python 3.10 runtimes.
+   - Zero documentation or evaluation reports claim that `CASE-RW-01` was isolated in Tier 1.
+   - `CASE-RW-04` serves as the official M3 Tier-1 Container Isolation benchmark under `OCI_CONTAINER_ISOLATED`.
 
 ---
 

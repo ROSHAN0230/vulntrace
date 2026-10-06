@@ -89,10 +89,10 @@ During implementation and live execution against the rootless Podman/WSL2 substr
 - **Root Cause:** Early-return path for rejected patches was written prior to backend abstraction refactoring.
 - **Resolution:** Dynamically populated `sandbox_engine=backend.capabilities.tier.value`, `isolation_tier=backend.capabilities.tier.value`, and preserved parent-validated `isolation_attestation`.
 
-### 7. Real-World Evaluation Dependency Environment Decoupling
+### 7. Real-World Evaluation Dependency Environment Decoupling (Option B Disclosure)
 - **Symptom:** `real_world_eval/run_eval.py` failed CASE-RW-01 with `UNEXPECTED_FAILURE` (`ModuleNotFoundError: No module named 'jsonschema'`) when defaulted to container tier.
 - **Root Cause:** Flasgger's target dependencies were provisioned into a host virtual environment by `EnvironmentBuilder` (Milestone M2), which is unavailable inside an offline container (`--network none`).
-- **Resolution:** Explicitly configured CASE-RW-01 to execute under `LOCAL_SUBPROCESS_FALLBACK` with `unsafe_local=True` (faithfully testing the M2 EnvironmentBuilder), while CASE-RW-04 executes end-to-end under `OCI_CONTAINER_ISOLATED` (Tier 1).
+- **Resolution (Option B):** Formally classified CASE-RW-01 as an M2 Environment-Builder Compatibility Test running under `LOCAL_SUBPROCESS_FALLBACK` with explicit `--unsafe-local` override. No documentation claims CASE-RW-01 ran in Tier 1. CASE-RW-04 (`repo_cloud_config`) serves as the official M3 Tier-1 Isolation Benchmark executed end-to-end under `OCI_CONTAINER_ISOLATED`.
 
 ---
 
@@ -221,4 +221,8 @@ tests/test_tier1_isolation.py::TestVerifierAntiGamingUnderTier1::test_pipeline_p
 
 1. **Docker vs. Podman on Windows WSL2:** Rootless container execution is powered by Podman 5.7.0 and crun inside WSL2 Ubuntu, exposing rootless OCI container semantics.
 2. **CI Isolation Fallback:** GitHub Actions runner environments execute in unprivileged VMs where nested rootless OCI containers may not be configured. CI environments fall back to Tier 0 under explicit `CI=true` override.
-3. **M4 Readiness:** Milestone M3 is fully complete. M4 (Tavily Intel and Nebius Token Factory LLM layer with cassettes and token ledger) is ready to begin.
+3. **Benchmark Isolation Boundary Disclosure (Option B / Spec §4.6 Truth-in-Advertising):**
+   - `CASE-RW-01` (Flasgger) is strictly documented and metadata-tagged as an **M2 Environment-Builder Compatibility Test** running under Tier 0 (`LOCAL_SUBPROCESS_FALLBACK`) with explicit `--unsafe-local` override to validate host virtualenv creation and legacy Python 3.10 syntax support.
+   - `CASE-RW-04` (`repo_cloud_config`) serves as the official **M3 Tier-1 Isolation Benchmark** executed end-to-end under `OCI_CONTAINER_ISOLATED` with kernel network denial, read-only rootfs, and unprivileged user execution.
+   - Zero documentation or metadata claims that CASE-RW-01 was isolated in Tier 1.
+4. **M4 Readiness:** Milestone M3 is fully complete. M4 (Tavily Intel and Nebius Token Factory LLM layer with cassettes and token ledger) is ready to begin.

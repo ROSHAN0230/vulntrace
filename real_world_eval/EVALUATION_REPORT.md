@@ -23,13 +23,13 @@ Pursuant to **Phase 4B Section 3**, VulnTrace **does not invent a single ungroun
 - **Patches Rejected:** `0 of 1 generated patches in real-world suite` (Adversarial rejection proven in unit suite: 1 syntax error, 1 empty diff)
 - **Regression Failures:** `0 of 1 remediated real-world cases` (4 of 4 pytests passed in `CASE-RW-04`)
 - **Complete Verified Remediations:** `1 of 4 cases` (`CASE-RW-04`: RED -> Nemotron -> GREEN -> Pytests Pass)
-- **Infrastructure-Blocked Runs:** `0 of 4 cases` (All executed in isolated `LOCAL_SUBPROCESS_FALLBACK` with purged secrets)
+- **Infrastructure-Blocked Runs:** `0 of 4 cases` (CASE-RW-04 executed under rootless container isolation `OCI_CONTAINER_ISOLATED`; CASE-RW-01 executed under `LOCAL_SUBPROCESS_FALLBACK` with explicit `--unsafe-local` override for M2 Environment-Builder compatibility test)
 - **Average Verification Pipeline Latency:** `2,148.50 ms`
 - **Model Token Usage (Nemotron 3 Ultra):** `251 prompt tokens, 139 completion tokens (84 reasoning tokens)`
 
 ---
 
-## 2. 15-Point Independent Evaluation Matrix
+## 2. 16-Point Independent Evaluation Matrix
 
 | Attribute | CASE-RW-01 (Flasgger Vulnerable) | CASE-RW-02 (Flasgger Patched) | CASE-RW-03 (Cookiecutter SCA FP) | CASE-RW-04 (Cloud Config Service) |
 | :--- | :--- | :--- | :--- | :--- |
@@ -47,7 +47,12 @@ Pursuant to **Phase 4B Section 3**, VulnTrace **does not invent a single ungroun
 | **12. Post-Patch Behavior**| `GREEN_STATE_BLOCKED` | `SKIPPED` | `SKIPPED` | `GREEN_STATE_BLOCKED` (Exit 42, parent verified) |
 | **13. Regression Result** | `SKIPPED (Pre-patch inconclusive)` | `NOT_REQUIRED` | `NOT_REQUIRED` | `PASSED` (4/4 pytests passed cleanly) |
 | **14. Final Verdict** | `INCONCLUSIVE` | `NO_VULNERABILITIES_FOUND` | `UNREACHABLE_FALSE_POSITIVE` | **`GREEN_STATE_VERIFIED`** |
-| **15. Disclosed Limitations**| Dedicated venv built with PyYAML 5.4.1 runtime on Python 3.10; exploit constructor blocked before code execution. | Static analysis proves absence of symbol only. | Static AST does not resolve dynamic plugin hooks. | Verification proves defense against evaluated exploit payload in local sandbox. |
+| **15. Execution Tier Used** | **Tier 0** (`LOCAL_SUBPROCESS_FALLBACK` with explicit `--unsafe-local` for M2 Environment-Builder test) | **Tier 0** (Static suppression before harness execution) | **Tier 0** (Static suppression before harness execution) | **Tier 1** (`OCI_CONTAINER_ISOLATED`, rootless container default) |
+| **16. Disclosed Limitations**| Dedicated venv built with PyYAML 5.4.1 runtime on Python 3.10; exploit constructor blocked before code execution. | Static analysis proves absence of symbol only. | Static AST does not resolve dynamic plugin hooks. | Verification proves defense against evaluated exploit payload under verified execution tier. |
+
+> **Isolation Tier Boundary Disclosure (Option B / Spec §4.6 Truth-in-Advertising):**
+> - **CASE-RW-01 (Flasgger):** Classified and executed strictly as an **M2 Environment-Builder Compatibility Test** under **Tier 0** (`LOCAL_SUBPROCESS_FALLBACK`) with explicit `--unsafe-local` override (verifying host virtualenv creation and legacy Python 3.10 syntax support). It was **not** isolated under Tier 1.
+> - **CASE-RW-04 (Cloud Config Service):** Executed end-to-end under **Tier 1** (`OCI_CONTAINER_ISOLATED`), proving full rootless container isolation with kernel network denial (`--network none`), read-only root filesystem, tmpfs scratch, dropped capabilities, and unprivileged user execution. Zero documentation or metadata claims that CASE-RW-01 was isolated in Tier 1.
 
 ---
 
