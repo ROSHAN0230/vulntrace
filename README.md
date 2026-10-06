@@ -91,7 +91,7 @@ Pursuant to strict evaluation integrity, VulnTrace **does not invent a single un
 | **12. Post-Patch Behavior**| `UNEXPECTED_FAILURE` | `SKIPPED` | `SKIPPED` | `GREEN_STATE_BLOCKED` (Exit 42, parent verified) |
 | **13. Regression Result** | `SKIPPED` | `NOT_REQUIRED` | `NOT_REQUIRED` | `PASSED` (4/4 pytests passed cleanly) |
 | **14. Final Verdict** | `UNEXPECTED_FAILURE` | `NO_VULNERABILITIES_FOUND` | `UNREACHABLE_FALSE_POSITIVE` | **`GREEN_STATE_VERIFIED`** |
-| **15. Execution Tier Used** | **Tier 0** (`LOCAL_SUBPROCESS_FALLBACK` with explicit unsafe override; M3+ mandates Tier 1) | **Tier 0** (Static suppression before harness execution) | **Tier 0** (Static suppression before harness execution) | **Tier 0** (`LOCAL_SUBPROCESS_FALLBACK`, curated fixture; M3+ supports Tier 1 container) |
+| **15. Execution Tier Used** | **Tier 0** (`LOCAL_SUBPROCESS_FALLBACK` with explicit unsafe override for M2 EnvironmentBuilder test) | **Tier 0** (Static suppression before harness execution) | **Tier 0** (Static suppression before harness execution) | **Tier 1** (`OCI_CONTAINER_ISOLATED`, rootless container default) |
 | **16. Disclosed Limitations**| Requires target repository runtime dependencies installed in environment. | Static analysis proves absence of symbol only. | Static AST does not resolve dynamic plugin hooks. | Verification proves defense against evaluated exploit payload in local sandbox. |
 
 ---
