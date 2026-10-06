@@ -4,6 +4,21 @@ All major project updates and milestones completed during the Nebius × NVIDIA G
 
 ---
 
+## [M3] Isolation Tier 1: Rootless Container Isolation & Adversarial Containment Proofs — 2026-10-06
+- **Rootless Container Execution (Spec §4.6):** Made Tier 1 rootless container isolation (`ContainerExecutionBackend` with Podman 5.7.0 / crun) the default execution tier for all real-world and non-curated repository execution via `BackendFactory.resolve_best_available_backend`.
+- **Enforced Security Boundaries:** Enforced full Tier 1 runtime flags on all container executions: kernel network denial (`--network none`), read-only root filesystem (`--read-only`), ephemeral tmpfs scratch (`--tmpfs /tmp:rw,nosuid,nodev,size=64m`), unprivileged non-root user (`--user 1000:1000`), Linux capability dropping (`--cap-drop ALL`, `--security-opt no-new-privileges`), and cgroup resource limits (`--memory 512m`, `--cpus 1.0`, `--pids-limit 128`).
+- **Tier 0 Degraded Refusal Guard:** Enforced strict non-curated repository refusal in `LocalSubprocessBackend`, raising `PermissionError` unless `unsafe_local=True` or `--unsafe-local` is explicitly passed; branded runtime engine attestation as `(DEGRADED_TIER_0)`.
+- **Adversarial Containment Proof Suite:** Created `tests/test_tier1_isolation.py` (14 tests) verifying all 8 security conditions: outbound network denial, host filesystem write denial, fork process explosion containment, memory exhaustion OOM containment, wall-clock timeout watchdog descendant killing, host credential isolation, unforgeable attestation anti-spoofing, ephemeral tmpfs workspace isolation, and Verifier 3/3 RED and 3/3 GREEN execution under Tier 1.
+- **Real Execution Bugs Caught & Fixed:**
+  1. *WSL2 Container Leak on Timeout:* Terminating Windows `wsl.exe` left background container running; resolved by passing native Podman `--timeout <sec>` watchdog and unique container naming with `podman rm -f` fallback cleanup.
+  2. *WSL Drvfs Pytest Cache Permission Crash:* Pytest writing `.pytest_cache` in `/workspace` as user `1000:1000` failed with `[Errno 1] Operation not permitted`; resolved by adding `-p no:cacheprovider` to container pytest invocations.
+  3. *WSL Drvfs `copystat` Build Crash:* `setuptools` build step failed when `shutil.copystat` attempted `chmod` on files created in `/workspace/build`; resolved by routing builds to native tmpfs (`--build-base /tmp/build --build-lib /tmp/build/lib`).
+  4. *Timeout vs OOM Kill Code Collision:* Podman timeout exit code 255 was conflated with cgroups OOM kill code 137; resolved by isolating timeout handling to exit code 255.
+- **Documentation & Evidence:** Authored `docs/SAFETY.md` (boundaries, probe policy, threat model), generated `docs/evidence/m3_isolation_tier1.md`, and updated `README.md` benchmark isolation tier references and disclosures.
+- **Test Suite & Linter:** 38/38 container/conformance tests passed; 128/128 non-container tests passed; 0 ruff lint errors.
+
+---
+
 ## [M2] Dedicated Target Environment Builder & Real-Repo Evaluation — 2026-10-05
 - **Dedicated Per-Case Environment Builder (Spec §4.5):** Implemented `vulntrace/envbuild/` with `EnvironmentBuilder` for provisioning isolated virtual environments per evaluation case strictly outside the workspace directory (`%TEMP%/vulntrace_case_envs/`).
 - **Static Manifest Discovery:** Added dependency extraction across `requirements.txt`, `pyproject.toml`, and `setup.py` without code execution.

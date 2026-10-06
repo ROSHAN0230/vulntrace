@@ -31,8 +31,42 @@ class BackendCapabilities(BaseModel):
     resource_limits_enforced: bool = False
     host_identity_isolated: bool = False
     hardware_virtualized: bool = False
+    read_only_rootfs: bool = False
+    tmpfs_scratch: bool = False
+    non_root_user: bool = False
     description: str
     boundary_caveats: List[str] = Field(default_factory=list)
+
+
+def is_curated_fixture(repo_path: Any) -> bool:
+    """
+    Determines whether a repository path is an approved curated developer fixture
+    (permitted to execute under Tier 0 LocalSubprocess) or a real/non-curated repository
+    (which mandates Tier 1 rootless container isolation under Spec §4.6).
+    """
+    if repo_path is None:
+        return True
+    p = Path(repo_path).resolve()
+    if (p / ".vulntrace_curated_fixture").exists():
+        return True
+    p_str = str(p).replace("\\", "/").lower()
+    curated_indicators = [
+        "/tests/fixtures/",
+        "/benchmarks/contextual_reasoning",
+        "/benchmarks/unreachable_dead_code",
+        "/benchmarks/synthetic",
+        "sample_repo",
+        "synthetic_benchmark",
+        "dead_code_service",
+    ]
+    if any(ind in p_str for ind in curated_indicators):
+        if "real_world_eval" in p_str:
+            return False
+        return True
+    if "pytest-" in p_str or "tmp_path" in p_str or "vulntrace_test_" in p_str or "vulntrace_fixture_" in p_str:
+        if "real_world_eval" not in p_str:
+            return True
+    return False
 
 
 class ExecutionAttestation(BaseModel):

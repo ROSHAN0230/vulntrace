@@ -59,11 +59,15 @@ class VerificationPipeline:
         if backend is None:
             tier_override = None
             if req.execution_backend:
-                if "CONTAINER" in req.execution_backend.upper() or "OCI" in req.execution_backend.upper():
+                if "CONTAINER" in req.execution_backend.upper() or "OCI" in req.execution_backend.upper() or "TIER1" in req.execution_backend.upper() or "TIER_1" in req.execution_backend.upper():
                     tier_override = IsolationTier.OCI_CONTAINER_ISOLATED
-                elif "LOCAL" in req.execution_backend.upper() or "SUBPROCESS" in req.execution_backend.upper():
+                elif "LOCAL" in req.execution_backend.upper() or "SUBPROCESS" in req.execution_backend.upper() or "TIER0" in req.execution_backend.upper() or "TIER_0" in req.execution_backend.upper():
                     tier_override = IsolationTier.LOCAL_SUBPROCESS_FALLBACK
-            backend = BackendFactory.resolve_best_available_backend(force_tier=tier_override)
+            backend = BackendFactory.resolve_best_available_backend(
+                force_tier=tier_override,
+                target_repo=source_repo,
+                unsafe_local=getattr(req, "unsafe_local", False)
+            )
 
         def emit(event_type: str, stage: str, message: str, data: Optional[Dict[str, Any]] = None):
             if on_event:

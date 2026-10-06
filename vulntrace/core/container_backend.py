@@ -7,6 +7,7 @@ and unforgeable parent-generated execution attestation.
 
 import sys
 import time
+import uuid
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Callable, Tuple
@@ -116,6 +117,14 @@ class ContainerExecutionBackend(ExecutionBackend):
         ContainerExecutionBackend._cached_image_digest[prefix_key] = self._image_digest
         return self._image_digest
 
+    def _kill_container(self, container_name: str) -> None:
+        """Forcibly removes/kills a running container to prevent process leaks in WSL2/Linux."""
+        try:
+            cmd = self._build_cli_prefix() + ["podman", "rm", "-f", container_name]
+            subprocess.run(cmd, capture_output=True, timeout=5)
+        except Exception:
+            pass
+
     @property
     def capabilities(self) -> BackendCapabilities:
         return BackendCapabilities(
@@ -127,13 +136,17 @@ class ContainerExecutionBackend(ExecutionBackend):
             resource_limits_enforced=True,
             host_identity_isolated=True,
             hardware_virtualized=False,
+            read_only_rootfs=True,
+            tmpfs_scratch=True,
+            non_root_user=True,
             description=(
                 "OCI Rootless Container execution backend (Podman/crun) with kernel network denial "
-                "(--network none), host filesystem hiding, PID caps (128), and memory limits (512MB)."
+                "(--network none), read-only root FS (--read-only), tmpfs scratch (/tmp), unprivileged non-root execution "
+                "(--user 1000:1000), host filesystem hiding, PID caps (128), and memory limits (512MB)."
             ),
             boundary_caveats=[
                 "Shares Linux/WSL2 host kernel (cgroups/namespaces isolation). Not full hardware virtualization (e.g. Firecracker/KVM).",
-                "Disposable workspace directory is bind-mounted into container at /workspace."
+                "Disposable workspace directory copy is bind-mounted into container at /workspace."
             ]
         )
 
@@ -171,18 +184,31 @@ class ContainerExecutionBackend(ExecutionBackend):
                 on_log("OCI Backend: Executing setup.py build inside isolated container tier (--network none, --cap-drop ALL)...")
 
             wsl_path = self.to_wsl_path(workspace_path)
+            container_name = f"vulntrace-build-{uuid.uuid4().hex[:12]}"
+            int_timeout = max(int(timeout), 1)
             cmd = self._build_cli_prefix() + [
                 "podman", "run", "--rm",
+                "--name", container_name,
                 "--network", "none",
+                "--read-only",
+                "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
+                "--user", "1000:1000",
                 "--memory", "512m",
                 "--cpus", "1.0",
                 "--pids-limit", "128",
                 "--cap-drop", "ALL",
                 "--security-opt", "no-new-privileges",
+                "-e", "PYTHONPATH=/workspace",
+                "-e", "PYTHONDONTWRITEBYTECODE=1",
+                "-e", "TMPDIR=/tmp",
+                "-e", "TEMP=/tmp",
+                "--timeout", str(int_timeout),
                 "-v", f"{wsl_path}:/workspace:rw",
                 "-w", "/workspace",
                 self.IMAGE_NAME,
-                "python3", "setup.py", "build"
+                "python3", "setup.py", "build",
+                "--build-base", "/tmp/build",
+                "--build-lib", "/tmp/build/lib"
             ]
 
             try:
@@ -197,8 +223,10 @@ class ContainerExecutionBackend(ExecutionBackend):
                 stderr = proc.stderr or ""
             except subprocess.TimeoutExpired:
                 exit_code = -9
+                self._kill_container(container_name)
                 stderr = f"OCI container setup.py build timed out after {timeout}s."
             except Exception as e:
+                self._kill_container(container_name)
                 exit_code = 1
                 stderr = f"OCI container setup.py execution failed: {e}"
 
@@ -227,7 +255,7 @@ class ContainerExecutionBackend(ExecutionBackend):
                 "setup_executed_in_container": setup_executed,
                 "setup_latency_ms": round(latency_ms, 2),
                 "build_duration_ms": round(latency_ms, 2),
-                "python_version": "Python 3.11 (OCI Container)",
+                "python_version": "Python 3.12 (OCI Rootless Container)",
                 "failure_classification": "ENV_BUILD_FAILED" if exit_code != 0 else None,
                 "pip_log_excerpt": stderr if exit_code != 0 else None,
             },
@@ -245,7 +273,8 @@ class ContainerExecutionBackend(ExecutionBackend):
     ) -> ExecutionCommandResult:
         """
         Executes a verification harness inside an OCI container under --network none,
-        strict cgroup resource caps, and parent-side filesystem validation.
+        read-only root FS, tmpfs scratch, unprivileged non-root user, cgroup limits,
+        and parent-side filesystem validation.
         """
         t0 = time.perf_counter()
         workspace_path = Path(workspace_id)
@@ -254,17 +283,32 @@ class ContainerExecutionBackend(ExecutionBackend):
         # Clear sentinel marker prior to execution
         sentinel_path = (workspace_path / sentinel_filename) if sentinel_filename else None
         if sentinel_path and sentinel_path.exists():
-            sentinel_path.unlink()
+            try:
+                sentinel_path.unlink()
+            except Exception:
+                pass
 
-        # Build podman run command with strict security flags
+        container_name = f"vulntrace-exec-{uuid.uuid4().hex[:12]}"
+        int_timeout = max(int(timeout), 1)
+
+        # Build podman run command with strict Tier 1 security flags
         cmd = self._build_cli_prefix() + [
             "podman", "run", "--rm",
+            "--name", container_name,
             "--network", "none",
+            "--read-only",
+            "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
+            "--user", "1000:1000",
             "--memory", "512m",
             "--cpus", "1.0",
             "--pids-limit", "128",
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
+            "-e", "PYTHONPATH=/workspace",
+            "-e", "PYTHONDONTWRITEBYTECODE=1",
+            "-e", "TMPDIR=/tmp",
+            "-e", "TEMP=/tmp",
+            "--timeout", str(int_timeout),
             "-v", f"{wsl_path}:/workspace:rw",
             "-w", "/workspace",
             self.IMAGE_NAME,
@@ -281,19 +325,28 @@ class ContainerExecutionBackend(ExecutionBackend):
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout + 3.0
             )
             exit_code = proc.returncode
             stdout = proc.stdout or ""
             stderr = proc.stderr or ""
+            # Native Podman crun watchdog exits with 255 on container timeout
+            if exit_code == 255 or (exit_code == 137 and "timed out" in stderr.lower()):
+                timed_out = True
+                exit_code = -9
+                stderr = f"OCI container execution timed out after {timeout}s."
+                if on_log:
+                    on_log(f"OCI Backend: Execution watchdog triggered ({timeout}s). Container terminated.")
         except subprocess.TimeoutExpired as te:
             timed_out = True
             exit_code = -9
+            self._kill_container(container_name)
             stdout = (te.stdout or "") if isinstance(te.stdout, str) else ""
             stderr = f"OCI container execution timed out after {timeout}s."
             if on_log:
                 on_log(f"OCI Backend: Execution watchdog triggered ({timeout}s). Container terminated.")
         except Exception as e:
+            self._kill_container(container_name)
             exit_code = 1
             stderr = f"OCI container launch failed: {e}"
 
@@ -302,7 +355,10 @@ class ContainerExecutionBackend(ExecutionBackend):
         # Physical sentinel verification on the parent filesystem
         sentinel_created = bool(sentinel_path and sentinel_path.exists())
         if sentinel_created and sentinel_path:
-            sentinel_path.unlink()
+            try:
+                sentinel_path.unlink()
+            except Exception:
+                pass
 
         # Parse behavioral telemetry and apply parent trust boundary audit
         reproduction_state, assertion_res, exception_type, structured_evidence, parent_validated, validation_notes = SubprocessSandboxRunner.parse_and_validate_telemetry(
@@ -313,7 +369,7 @@ class ContainerExecutionBackend(ExecutionBackend):
             timed_out=timed_out
         )
 
-        attestation = self.generate_attestation(workspace_id)
+        attestation = self.generate_attestation(workspace_id, container_name=container_name)
 
         return ExecutionCommandResult(
             exit_code=exit_code,
@@ -343,22 +399,35 @@ class ContainerExecutionBackend(ExecutionBackend):
         timeout: float = 30.0,
         test_file: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Runs pytest inside the isolated OCI container."""
+        """Runs pytest inside the isolated OCI container under Tier 1 rootless containment."""
         t0 = time.perf_counter()
         workspace_path = Path(workspace_id)
         wsl_path = self.to_wsl_path(workspace_path)
+        container_name = f"vulntrace-pytest-{uuid.uuid4().hex[:12]}"
+        int_timeout = max(int(timeout), 1)
+
         cmd = self._build_cli_prefix() + [
             "podman", "run", "--rm",
+            "--name", container_name,
             "--network", "none",
+            "--read-only",
+            "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
+            "--user", "1000:1000",
             "--memory", "512m",
             "--cpus", "1.0",
             "--pids-limit", "128",
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
+            "-e", "PYTHONPATH=/workspace",
+            "-e", "PYTHONDONTWRITEBYTECODE=1",
+            "-e", "TMPDIR=/tmp",
+            "-e", "TEMP=/tmp",
+            "--timeout", str(int_timeout + 5),
             "-v", f"{wsl_path}:/workspace:rw",
             "-w", "/workspace",
             self.IMAGE_NAME,
-            "python3", "-m", "pytest"
+            "python3", "-m", "pytest",
+            "-p", "no:cacheprovider"
         ]
         if test_file:
             cmd.append(test_file)
@@ -388,6 +457,7 @@ class ContainerExecutionBackend(ExecutionBackend):
                 "test_count": test_count
             }
         except subprocess.TimeoutExpired:
+            self._kill_container(container_name)
             return {
                 "passed": False,
                 "exit_code": -9,
@@ -398,6 +468,7 @@ class ContainerExecutionBackend(ExecutionBackend):
                 "error": "TIMED_OUT"
             }
         except Exception as e:
+            self._kill_container(container_name)
             return {
                 "passed": False,
                 "exit_code": 1,
@@ -412,7 +483,7 @@ class ContainerExecutionBackend(ExecutionBackend):
         """Destroys the disposable workspace on the host."""
         SubprocessSandboxRunner.cleanup_workspace(Path(workspace_id))
 
-    def generate_attestation(self, workspace_id: str) -> ExecutionAttestation:
+    def generate_attestation(self, workspace_id: str, container_name: Optional[str] = None) -> ExecutionAttestation:
         """Generates an unforgeable parent-validated execution attestation."""
         caps = self.capabilities
         return ExecutionAttestation(
@@ -420,7 +491,7 @@ class ContainerExecutionBackend(ExecutionBackend):
             runtime_engine="podman_crun_rootless_wsl2" if sys.platform == "win32" else "podman_crun_rootless_linux",
             runtime_version="podman 5.7.0",
             workspace_id=str(workspace_id),
-            container_id=None,
+            container_id=container_name,
             image_digest=self.get_image_digest(),
             network_mode="none (kernel denied)",
             mounts=[f"{workspace_id}:/workspace:rw"],

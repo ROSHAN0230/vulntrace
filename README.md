@@ -44,11 +44,11 @@ Modern Software Composition Analysis (SCA) scanners match package version string
 | **Detection Source** | Lockfile / manifest version regex | User prompts / heuristics | Live OSV.dev + Tavily Threat Intel |
 | **Reachability Analysis** | Manifest matching without call-graph verification | None | Multi-file AST Call-Graph from Entrypoints |
 | **False Positive Suppression** | Manual developer triage | Heuristic / ungrounded | Automated (uncalled dead code labeled FP) |
-| **Behavioral Reproduction** | None | None (hallucination risk) | Automated in isolated disposable sandbox |
+| **Behavioral Reproduction** | None | None (hallucination risk) | Automated in Tier 1 rootless container (Tier 0 local fallback for dev fixtures) |
 | **Remediation Method** | Major/minor version bump (often breaking) | Full-file LLM rewrite | Surgical minimal AST codemod |
 | **Remediation Quality** | High regression rate | Hallucination / scope creep | Strictly scoped (<= 10 lines, 1 file) |
 | **Post-Patch Trust Boundary** | None | Assumes build passes | **Parent Trust Audit**: Disk sentinel + Exit 42 |
-| **Regression Guarantee** | None | Optional user prompt | Isolated sandbox pytest execution |
+| **Regression Guarantee** | None | Optional user prompt | Contained container pytest execution (Tier 0 local fallback for dev fixtures) |
 | **Audit Evidence** | Alert list CSV | Transient chat log | Deterministic SHA-256 Hashed JSON + Structured Markdown |
 
 ---
@@ -67,7 +67,7 @@ Pursuant to strict evaluation integrity, VulnTrace **does not invent a single un
 - **Patches Rejected:** `0 of 1 generated patches in real-world suite` (Adversarial rejection proven in unit suite: 1 syntax error, 1 empty diff)
 - **Regression Failures:** `0 of 1 remediated real-world cases` (4 of 4 pytests passed in `CASE-RW-04`)
 - **Complete Verified Remediations:** `1 of 4 cases` (`CASE-RW-04`: RED -> Nemotron -> GREEN -> Pytests Pass)
-- **Infrastructure-Blocked Runs:** `0 of 4 cases` (All executed in isolated `LOCAL_SUBPROCESS_FALLBACK` with purged secrets)
+- **Infrastructure-Blocked Runs:** `0 of 4 cases` (Evaluated in developer Tier 0 `LOCAL_SUBPROCESS_FALLBACK` with purged secrets; real external repository execution mandates Tier 1 Rootless Container isolation by default)
 - **Average Verification Pipeline Latency:** `2,148.50 ms`
 - **Model Token Usage (Nemotron 3 Ultra):** `251 prompt tokens, 139 completion tokens (84 reasoning tokens)`
 
@@ -91,7 +91,8 @@ Pursuant to strict evaluation integrity, VulnTrace **does not invent a single un
 | **12. Post-Patch Behavior**| `UNEXPECTED_FAILURE` | `SKIPPED` | `SKIPPED` | `GREEN_STATE_BLOCKED` (Exit 42, parent verified) |
 | **13. Regression Result** | `SKIPPED` | `NOT_REQUIRED` | `NOT_REQUIRED` | `PASSED` (4/4 pytests passed cleanly) |
 | **14. Final Verdict** | `UNEXPECTED_FAILURE` | `NO_VULNERABILITIES_FOUND` | `UNREACHABLE_FALSE_POSITIVE` | **`GREEN_STATE_VERIFIED`** |
-| **15. Disclosed Limitations**| Requires target repository runtime dependencies installed in environment. | Static analysis proves absence of symbol only. | Static AST does not resolve dynamic plugin hooks. | Verification proves defense against evaluated exploit payload in local sandbox. |
+| **15. Execution Tier Used** | **Tier 0** (`LOCAL_SUBPROCESS_FALLBACK` with explicit unsafe override; M3+ mandates Tier 1) | **Tier 0** (Static suppression before harness execution) | **Tier 0** (Static suppression before harness execution) | **Tier 0** (`LOCAL_SUBPROCESS_FALLBACK`, curated fixture; M3+ supports Tier 1 container) |
+| **16. Disclosed Limitations**| Requires target repository runtime dependencies installed in environment. | Static analysis proves absence of symbol only. | Static AST does not resolve dynamic plugin hooks. | Verification proves defense against evaluated exploit payload in local sandbox. |
 
 ---
 
@@ -166,7 +167,9 @@ SCA tools generate immense alert fatigue by warning on every library version in 
 VulnTrace analyzes all Python files using an AST Call-Graph Solver tracing from top-level repository entrypoints down to candidate vulnerable sink functions (e.g. `yaml.load`). If vulnerable functions are only found in uncalled dead code, VulnTrace classifies the alert as `UNREACHABLE_FALSE_POSITIVE`, preventing unnecessary work.
 
 ### Q3. What makes behavioral verification safe?
-All execution occurs in disposable `%TEMP%` directories with completely purged environment secrets (stripping `NEBIUS_API_KEY`, `TAVILY_API_KEY`, AWS tokens, SSH keys) and strict network isolation during verification (setting offline pip flags, dummy proxy endpoints, and child socket blocking). The subprocess uses target-bound benign object instantiation (writing a timestamped sentinel marker) rather than destructive shell commands. Watchdog timers terminate orphaned child process trees. While isolated on the filesystem and network, the runner executes as a local subprocess sharing the host OS kernel and loopback interface (disclosed as `LOCAL_SUBPROCESS_FALLBACK`).
+All execution occurs in disposable workspaces. VulnTrace implements a tiered isolation architecture (`docs/SAFETY.md`):
+- **Tier 1 (Rootless OCI Container):** The default execution tier for all real-world/non-curated repositories. Harnesses run in a rootless container (Podman in WSL2/Linux) with kernel network denial (`--network none`), read-only root filesystem (`--read-only`), ephemeral tmpfs (`/tmp`), unprivileged non-root execution (`--user 1000:1000`), CPU/memory/PIDs limits (`--memory 512m --cpus 1.0 --pids-limit 128`), wall-clock timeout watchdog, and zero host mounts except the disposable workspace copy.
+- **Tier 0 (Local Subprocess Fallback):** Developer machine execution for curated fixtures only. **Tier 0 does not provide isolation**—it runs as the ambient host user with Win32 Job Object cleanup, memory caps, and cooperative proxy null-routing, and strictly refuses non-curated repositories unless `--unsafe-local` is passed. Payloads in all tiers use target-bound benign object instantiation (writing a timestamped sentinel marker) rather than destructive shell commands.
 
 ### Q4. Why is the post-patch check trusted?
 VulnTrace implements a strict **Parent Trust Boundary**. The parent runner never trusts child-process stdout or self-reporting. It independently audits the physical filesystem to ensure the sentinel file was NEVER created, evaluates in-harness positive controls to ensure benign functionality survived, and mandates exit code 42 (indicating an intentional security block).
@@ -267,8 +270,10 @@ All 108 test cases should pass cleanly.
 
 ## 10. Disclosures & Formal Limitations
 
-1. **ConTree Cloud Sandboxing:** ConTree API returned `PERMISSION_DENIED (HTTP 403)` on `/sandboxes`. VulnTrace operates using `LOCAL_SUBPROCESS_FALLBACK`. No cloud responses are simulated or falsified.
-2. **Local Subprocess Sandbox Boundary:** Local sandboxes execute in disposable `%TEMP%` directories with purged credentials, timeout guards, and process-tree cleanup. However, they share the host operating system kernel and local loopback interface.
+1. **Isolation Tiers & Safety Boundaries:** VulnTrace implements a tiered execution architecture detailed in [`docs/SAFETY.md`](docs/SAFETY.md):
+   - **Tier 1 (Rootless OCI Container):** The default execution tier for all real-world and non-curated repositories. Provides kernel-enforced network denial (`--network none`), read-only root filesystem (`--read-only`), unprivileged non-root identity (`--user 1000:1000`), dropped Linux capabilities (`--cap-drop ALL`), tmpfs scratch (`/tmp`), and cgroup resource limits (512MB RAM, 128 PIDs, 1.0 CPU).
+   - **Tier 0 (`LOCAL_SUBPROCESS_FALLBACK`):** Local developer execution for curated test fixtures only. **Tier 0 does not provide operating system isolation, user separation, or container virtualization.** It executes as the ambient host user and strictly refuses non-curated repository inputs unless explicitly overridden with `--unsafe-local`.
+2. **ConTree Cloud Sandboxing:** ConTree API returned `PERMISSION_DENIED (HTTP 403)` on `/sandboxes`. VulnTrace operates using local execution backends (Tier 1 rootless container or Tier 0 local fallback). No cloud responses are simulated or falsified.
 3. **Static AST Reachability Scope:** The AST analyzer resolves static direct imports and aliased calls. It does not resolve dynamic runtime reflection (`getattr`), dynamic imports (`importlib`), or monkey-patching.
 
 ---

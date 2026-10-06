@@ -5,6 +5,7 @@ environment sanitization, memory limits, and cooperative network denial.
 Explicitly labeled as LOCAL_SUBPROCESS_FALLBACK with honest boundary caveats.
 """
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -15,7 +16,8 @@ from vulntrace.core.backend import (
     BackendCapabilities,
     IsolationTier,
     ExecutionAttestation,
-    ExecutionCommandResult
+    ExecutionCommandResult,
+    is_curated_fixture
 )
 from vulntrace.sandbox.runner import SubprocessSandboxRunner
 
@@ -27,7 +29,8 @@ class LocalSubprocessBackend(ExecutionBackend):
     Never misrepresents itself as container- or VM-isolated.
     """
 
-    def __init__(self):
+    def __init__(self, unsafe_local: bool = False):
+        self.unsafe_local = unsafe_local
         self._target_py_map: Dict[str, str] = {}
         self._target_venv_map: Dict[str, str] = {}
 
@@ -42,15 +45,20 @@ class LocalSubprocessBackend(ExecutionBackend):
             resource_limits_enforced=True,
             host_identity_isolated=False,
             hardware_virtualized=False,
+            read_only_rootfs=False,
+            tmpfs_scratch=False,
+            non_root_user=False,
             description=(
                 "Host subprocess fallback with Win32 Job Object process-tree containment, "
-                "512MB RAM cap, sanitized environment variables, and cooperative HTTP_PROXY null-routing."
+                "512MB RAM cap, sanitized environment variables, and cooperative HTTP_PROXY null-routing. "
+                "Explicitly degraded tier for curated developer fixtures only."
             ),
             boundary_caveats=[
-                "Process executes under ambient host OS user identity (no OS user separation).",
+                "DEGRADED TIER 0: Process executes under ambient host OS user identity (no OS user separation).",
                 "Host filesystem remains readable subject to ambient OS DACLs.",
                 "Network isolation is cooperative/environment-level (HTTP_PROXY redirect); raw native sockets bypass.",
-                "Dependency build hooks (setup.py/PEP 517) execute under host identity with sanitized env."
+                "Dependency build hooks (setup.py/PEP 517) execute under host identity with sanitized env.",
+                "Refuses non-curated repository input unless unsafe_local=True is explicitly set."
             ]
         )
 
@@ -75,7 +83,19 @@ class LocalSubprocessBackend(ExecutionBackend):
     async def initialize_workspace(self, source_repo: Path) -> str:
         """
         Creates an isolated disposable directory copy on the host.
+        Refuses non-curated repository input unless explicitly permitted via unsafe_local.
         """
+        source_repo = Path(source_repo).resolve()
+        is_curated = is_curated_fixture(source_repo)
+        if not self.unsafe_local and not is_curated:
+            env_override = os.environ.get("VULNTRACE_UNSAFE_LOCAL") in ("1", "true", "True") or os.environ.get("CI") == "true"
+            if not env_override:
+                raise PermissionError(
+                    f"Tier 0 (LocalSubprocess) refused non-curated repository '{source_repo.name}'. "
+                    "Tier 0 execution is strictly restricted to curated developer fixtures. "
+                    "Real/non-curated repositories require Isolation Tier 1 (rootless container). "
+                    "Pass unsafe_local=True or --unsafe-local to explicitly override."
+                )
         disposable_dir = SubprocessSandboxRunner.prepare_disposable_workspace(source_repo)
         return str(disposable_dir.resolve())
 
@@ -239,7 +259,7 @@ class LocalSubprocessBackend(ExecutionBackend):
         caps = self.capabilities
         return ExecutionAttestation(
             backend_tier=caps.tier,
-            runtime_engine="python_subprocess_win32_job_object" if sys.platform == "win32" else "python_subprocess_posix",
+            runtime_engine="python_subprocess_win32_job_object (DEGRADED_TIER_0)" if sys.platform == "win32" else "python_subprocess_posix (DEGRADED_TIER_0)",
             runtime_version=sys.version.split()[0],
             workspace_id=str(workspace_id),
             container_id=None,

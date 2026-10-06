@@ -226,6 +226,7 @@ class VerificationPipelineRequest(BaseModel):
     advisory_summary: Optional[str] = None
     execution_backend: Optional[str] = None
     require_high_assurance: bool = False
+    unsafe_local: bool = False
 
 # --- Formal Evidence Schema (Phase 4) ---
 class RepositoryEvidence(BaseModel):

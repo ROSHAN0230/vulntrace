@@ -237,6 +237,7 @@ async def test_flasgger_vulnerable_commit_deterministic_verdict_3x():
                 target_file="flasgger/utils.py",
                 target_function="parse_docstring",
                 execution_backend="LOCAL_SUBPROCESS_FALLBACK",
+                unsafe_local=True,
                 use_nemotron=True,
             )
             res = await VerificationPipeline.run_pipeline(req)
