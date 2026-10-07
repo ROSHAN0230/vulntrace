@@ -403,6 +403,7 @@ class SurgicalPatchOutput(BaseModel):
     patched_code: Optional[str] = None
 
 class VerificationPipelineResponse(BaseModel):
+    run_id: Optional[str] = None
     cve_id: str
     repo_path: str
     reachability_verdict: str  # "REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED", "UNREACHABLE_FALSE_POSITIVE", "NOT_EVALUATED"

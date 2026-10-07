@@ -1,0 +1,511 @@
+{
+  "schema_version": "1.0.0",
+  "run_id": "run_0e54dfe079fc",
+  "export_timestamp": 1791381724.0204241,
+  "threat_intel": {
+    "cve_id": "CVE-2020-14343",
+    "status": "ok",
+    "query": "\"CVE-2020-14343\" vulnerable function fix commit exploit",
+    "timestamp": 1791381710.0812454,
+    "response_hash": "31d80865453507f702064366f4acf6b2bed2f148940ce62c254022959b450bf9",
+    "source_urls": [
+      "https://www.miggo.io/vulnerability-database/cve/CVE-2020-14343",
+      "https://github.com/pre-commit/pre-commit/issues/1753",
+      "https://explore.alas.aws.amazon.com/CVE-2020-14343.html",
+      "https://access.redhat.com/security/cve/cve-2020-14343",
+      "https://www.suse.com/security/cve/CVE-2020-14343.html"
+    ],
+    "findings": [
+      {
+        "title": "CVE-2020-14343: CVE-2020-14343: PyYAML Code Execution - CVE Database | Miggo | Miggo",
+        "url": "https://www.miggo.io/vulnerability-database/cve/CVE-2020-14343",
+        "snippet": "#### Miggo AIRoot Cause Analysis\n\nThe vulnerability stemmed from FullLoader inheriting dangerous YAML constructors from FullConstructor. The commit a001f27 explicitly moved these three multi-constructors (python/module, python/object, python/object/new) from FullConstructor to Un...",
+        "source": "Tavily Intelligence API (Verified Relevant)",
+        "relevant_to_cve": true
+      },
+      {
+        "title": "CVE-2020-14343 - RCE vulnerability in pyYAML dependency \u00b7 Issue #1753 \u00b7 pre-commit/pre-commit \u00b7 GitHub",
+        "url": "https://github.com/pre-commit/pre-commit/issues/1753",
+        "snippet": "### Problem\n\nCame across this RCE vulnerability CVE-2020-14343 pointing to the package pyYAML and its use of `full_load` method or the `FullLoader loader`.\n\n### Suggestion\n\nIt seems they don't have any intention of fixing the methods but they do have a safe alternative in the `sa...",
+        "source": "Tavily Intelligence API (Verified Relevant)",
+        "relevant_to_cve": true
+      },
+      {
+        "title": "CVE-2020-14343",
+        "url": "https://explore.alas.aws.amazon.com/CVE-2020-14343.html",
+        "snippet": "A vulnerability was discovered in the PyYAML library in versions before 5.4, where it is susceptible to arbitrary code execution when it processes untrusted YAML files through the full\\_load method or with the FullLoader loader. Applications that use the library to process untrus...",
+        "source": "Tavily Intelligence API (Verified Relevant)",
+        "relevant_to_cve": true
+      },
+      {
+        "title": "CVE-2020-14343 - Red Hat Customer Portal",
+        "url": "https://access.redhat.com/security/cve/cve-2020-14343",
+        "snippet": "## Description\n\nA vulnerability was discovered in the PyYAML library, where it is susceptible to arbitrary code execution when it processes untrusted YAML files through the full\\_load method or with the FullLoader loader. Applications that use the library to process untrusted inp...",
+        "source": "Tavily Intelligence API (Verified Relevant)",
+        "relevant_to_cve": true
+      },
+      {
+        "title": "CVE-2020-14343 Common Vulnerabilities and Exposures | SUSE",
+        "url": "https://www.suse.com/security/cve/CVE-2020-14343.html",
+        "snippet": "| CVSS detail | National Vulnerability Database | SUSE |\n| Base Score | 9.8 | 8.8 |\n| Vector | CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H | CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H |\n| Attack Vector | Network | Network |\n| Attack Complexity | Low | Low |\n| Privileges Requir...",
+        "source": "Tavily Intelligence API (Verified Relevant)",
+        "relevant_to_cve": true
+      }
+    ],
+    "affected_symbols": [
+      "yaml.load",
+      "yaml.full_load"
+    ],
+    "fix_patterns": [
+      "yaml.safe_load"
+    ],
+    "safe_patterns": [
+      "yaml.safe_load"
+    ],
+    "sink_classes": [
+      "deserialization"
+    ],
+    "confidence": 0.95,
+    "raw_findings_count": 6,
+    "retained_findings_count": 5,
+    "rejection_reasons": [
+      "Excluded: 'Cobham Satcom\u2019s maritime VSAT router has a public exploit and no fix, and the CVE record says the vendor never replied \u2013 Severity Daily' (https://severitydaily.com/cobham-satcom-vsat7090-cve-2026-83772-no-fix-no-vendor-reply) does not reference target CVE-2020-14343"
+    ],
+    "latency_ms": 2582.56,
+    "summary": "Identified 2 candidate symbol(s) across 1 sink class(es) from 5 source(s).",
+    "error": null
+  },
+  "token_ledger": {
+    "total_calls": 3,
+    "total_prompt_tokens": 1779,
+    "total_completion_tokens": 1234,
+    "total_reasoning_tokens": 708,
+    "total_tokens": 3721,
+    "total_latency_ms": 9366.32,
+    "calls": [
+      {
+        "call_id": "llm-4b950be5",
+        "timestamp": 1791381715.2470462,
+        "stage": "triage_classification",
+        "model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+        "tier": "SMALL",
+        "prompt_tokens": 464,
+        "completion_tokens": 480,
+        "reasoning_tokens": 176,
+        "total_tokens": 1120,
+        "latency_ms": 2880.5,
+        "success": true,
+        "error": null
+      },
+      {
+        "call_id": "llm-b9a59ded",
+        "timestamp": 1791381719.366136,
+        "stage": "patch_planning",
+        "model": "nvidia/nemotron-3-super-120b-a12b",
+        "tier": "MID",
+        "prompt_tokens": 543,
+        "completion_tokens": 454,
+        "reasoning_tokens": 322,
+        "total_tokens": 1319,
+        "latency_ms": 4116.43,
+        "success": true,
+        "error": null
+      },
+      {
+        "call_id": "llm-a0cf1689",
+        "timestamp": 1791381721.7369545,
+        "stage": "patch_synthesis",
+        "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+        "tier": "ULTRA",
+        "prompt_tokens": 772,
+        "completion_tokens": 300,
+        "reasoning_tokens": 210,
+        "total_tokens": 1282,
+        "latency_ms": 2369.39,
+        "success": true,
+        "error": null
+      }
+    ],
+    "tier_breakdown": {
+      "SMALL": {
+        "calls": 1,
+        "tokens": 1120,
+        "prompt": 464,
+        "completion": 480
+      },
+      "MID": {
+        "calls": 1,
+        "tokens": 1319,
+        "prompt": 543,
+        "completion": 454
+      },
+      "ULTRA": {
+        "calls": 1,
+        "tokens": 1282,
+        "prompt": 772,
+        "completion": 300
+      }
+    },
+    "model_breakdown": {
+      "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B": {
+        "calls": 1,
+        "tokens": 1120,
+        "prompt": 464,
+        "completion": 480
+      },
+      "nvidia/nemotron-3-super-120b-a12b": {
+        "calls": 1,
+        "tokens": 1319,
+        "prompt": 543,
+        "completion": 454
+      },
+      "nvidia/Nemotron-3-Ultra-550b-a55b": {
+        "calls": 1,
+        "tokens": 1282,
+        "prompt": 772,
+        "completion": 300
+      }
+    }
+  },
+  "target": {
+    "cve_id": "CVE-2020-14343",
+    "repository_path": "C:\\AI-Tools\\vulntrace\\benchmarks\\deep_callchain",
+    "target_file": "services/yaml_parser.py",
+    "target_function": "parse_custom_config",
+    "vulnerable_call": "yaml.load"
+  },
+  "reachability_evidence": {
+    "verdict": "REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED",
+    "structured_evidence": {
+      "sink_reached": true,
+      "assertion_evaluated": true,
+      "risky_effect_observed": false,
+      "expected_security_exception": true,
+      "unexpected_exception": false,
+      "exception_type": "ConstructorError",
+      "positive_control_passed": true,
+      "contracts_verified": [
+        "flat_service_mapping",
+        "nested_hierarchy_mapping",
+        "multi_type_mapping"
+      ],
+      "assertion": "GREEN_SECURITY_BLOCK_VERIFIED",
+      "detail": "Expected defensive security block verified (ConstructorError) and all 3 behavioral preservation contracts verified.",
+      "threat_intel": {
+        "cve_id": "CVE-2020-14343",
+        "status": "ok",
+        "query": "\"CVE-2020-14343\" vulnerable function fix commit exploit",
+        "timestamp": 1791381710.0812454,
+        "response_hash": "31d80865453507f702064366f4acf6b2bed2f148940ce62c254022959b450bf9",
+        "source_urls": [
+          "https://www.miggo.io/vulnerability-database/cve/CVE-2020-14343",
+          "https://github.com/pre-commit/pre-commit/issues/1753",
+          "https://explore.alas.aws.amazon.com/CVE-2020-14343.html",
+          "https://access.redhat.com/security/cve/cve-2020-14343",
+          "https://www.suse.com/security/cve/CVE-2020-14343.html"
+        ],
+        "findings": [
+          {
+            "title": "CVE-2020-14343: CVE-2020-14343: PyYAML Code Execution - CVE Database | Miggo | Miggo",
+            "url": "https://www.miggo.io/vulnerability-database/cve/CVE-2020-14343",
+            "snippet": "#### Miggo AIRoot Cause Analysis\n\nThe vulnerability stemmed from FullLoader inheriting dangerous YAML constructors from FullConstructor. The commit a001f27 explicitly moved these three multi-constructors (python/module, python/object, python/object/new) from FullConstructor to Un...",
+            "source": "Tavily Intelligence API (Verified Relevant)",
+            "relevant_to_cve": true
+          },
+          {
+            "title": "CVE-2020-14343 - RCE vulnerability in pyYAML dependency \u00b7 Issue #1753 \u00b7 pre-commit/pre-commit \u00b7 GitHub",
+            "url": "https://github.com/pre-commit/pre-commit/issues/1753",
+            "snippet": "### Problem\n\nCame across this RCE vulnerability CVE-2020-14343 pointing to the package pyYAML and its use of `full_load` method or the `FullLoader loader`.\n\n### Suggestion\n\nIt seems they don't have any intention of fixing the methods but they do have a safe alternative in the `sa...",
+            "source": "Tavily Intelligence API (Verified Relevant)",
+            "relevant_to_cve": true
+          },
+          {
+            "title": "CVE-2020-14343",
+            "url": "https://explore.alas.aws.amazon.com/CVE-2020-14343.html",
+            "snippet": "A vulnerability was discovered in the PyYAML library in versions before 5.4, where it is susceptible to arbitrary code execution when it processes untrusted YAML files through the full\\_load method or with the FullLoader loader. Applications that use the library to process untrus...",
+            "source": "Tavily Intelligence API (Verified Relevant)",
+            "relevant_to_cve": true
+          },
+          {
+            "title": "CVE-2020-14343 - Red Hat Customer Portal",
+            "url": "https://access.redhat.com/security/cve/cve-2020-14343",
+            "snippet": "## Description\n\nA vulnerability was discovered in the PyYAML library, where it is susceptible to arbitrary code execution when it processes untrusted YAML files through the full\\_load method or with the FullLoader loader. Applications that use the library to process untrusted inp...",
+            "source": "Tavily Intelligence API (Verified Relevant)",
+            "relevant_to_cve": true
+          },
+          {
+            "title": "CVE-2020-14343 Common Vulnerabilities and Exposures | SUSE",
+            "url": "https://www.suse.com/security/cve/CVE-2020-14343.html",
+            "snippet": "| CVSS detail | National Vulnerability Database | SUSE |\n| Base Score | 9.8 | 8.8 |\n| Vector | CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H | CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H |\n| Attack Vector | Network | Network |\n| Attack Complexity | Low | Low |\n| Privileges Requir...",
+            "source": "Tavily Intelligence API (Verified Relevant)",
+            "relevant_to_cve": true
+          }
+        ],
+        "affected_symbols": [
+          "yaml.load",
+          "yaml.full_load"
+        ],
+        "fix_patterns": [
+          "yaml.safe_load"
+        ],
+        "safe_patterns": [
+          "yaml.safe_load"
+        ],
+        "sink_classes": [
+          "deserialization"
+        ],
+        "confidence": 0.95,
+        "raw_findings_count": 6,
+        "retained_findings_count": 5,
+        "rejection_reasons": [
+          "Excluded: 'Cobham Satcom\u2019s maritime VSAT router has a public exploit and no fix, and the CVE record says the vendor never replied \u2013 Severity Daily' (https://severitydaily.com/cobham-satcom-vsat7090-cve-2026-83772-no-fix-no-vendor-reply) does not reference target CVE-2020-14343"
+        ],
+        "latency_ms": 2582.56,
+        "summary": "Identified 2 candidate symbol(s) across 1 sink class(es) from 5 source(s).",
+        "error": null
+      },
+      "tavily_threat_intelligence": {
+        "provider": "Tavily Search API",
+        "endpoint": "https://api.tavily.com/search",
+        "status": "HTTP_200_OK",
+        "latency_ms": 2582.56,
+        "query": "\"CVE-2020-14343\" vulnerable function fix commit exploit",
+        "raw_results_count": 5,
+        "retained_relevant_count": 5,
+        "filtered_out_count": 0,
+        "relevance_criterion": "Must explicitly mention target 'CVE-2020-14343' in title, URL, or body content",
+        "retained_sources": [
+          {
+            "title": "CVE-2020-14343: CVE-2020-14343: PyYAML Code Execution - CVE Database | Miggo | Miggo",
+            "url": "https://www.miggo.io/vulnerability-database/cve/CVE-2020-14343"
+          },
+          {
+            "title": "CVE-2020-14343 - RCE vulnerability in pyYAML dependency \u00b7 Issue #1753 \u00b7 pre-commit/pre-commit \u00b7 GitHub",
+            "url": "https://github.com/pre-commit/pre-commit/issues/1753"
+          },
+          {
+            "title": "CVE-2020-14343",
+            "url": "https://explore.alas.aws.amazon.com/CVE-2020-14343.html"
+          },
+          {
+            "title": "CVE-2020-14343 - Red Hat Customer Portal",
+            "url": "https://access.redhat.com/security/cve/cve-2020-14343"
+          },
+          {
+            "title": "CVE-2020-14343 Common Vulnerabilities and Exposures | SUSE",
+            "url": "https://www.suse.com/security/cve/CVE-2020-14343.html"
+          }
+        ],
+        "response_hash": "31d80865453507f702064366f4acf6b2bed2f148940ce62c254022959b450bf9"
+      },
+      "token_ledger": {
+        "total_calls": 3,
+        "total_prompt_tokens": 1779,
+        "total_completion_tokens": 1234,
+        "total_reasoning_tokens": 708,
+        "total_tokens": 3721,
+        "total_latency_ms": 9366.32,
+        "calls": [
+          {
+            "call_id": "llm-4b950be5",
+            "timestamp": 1791381715.2470462,
+            "stage": "triage_classification",
+            "model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+            "tier": "SMALL",
+            "prompt_tokens": 464,
+            "completion_tokens": 480,
+            "reasoning_tokens": 176,
+            "total_tokens": 1120,
+            "latency_ms": 2880.5,
+            "success": true,
+            "error": null
+          },
+          {
+            "call_id": "llm-b9a59ded",
+            "timestamp": 1791381719.366136,
+            "stage": "patch_planning",
+            "model": "nvidia/nemotron-3-super-120b-a12b",
+            "tier": "MID",
+            "prompt_tokens": 543,
+            "completion_tokens": 454,
+            "reasoning_tokens": 322,
+            "total_tokens": 1319,
+            "latency_ms": 4116.43,
+            "success": true,
+            "error": null
+          },
+          {
+            "call_id": "llm-a0cf1689",
+            "timestamp": 1791381721.7369545,
+            "stage": "patch_synthesis",
+            "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+            "tier": "ULTRA",
+            "prompt_tokens": 772,
+            "completion_tokens": 300,
+            "reasoning_tokens": 210,
+            "total_tokens": 1282,
+            "latency_ms": 2369.39,
+            "success": true,
+            "error": null
+          }
+        ],
+        "tier_breakdown": {
+          "SMALL": {
+            "calls": 1,
+            "tokens": 1120,
+            "prompt": 464,
+            "completion": 480
+          },
+          "MID": {
+            "calls": 1,
+            "tokens": 1319,
+            "prompt": 543,
+            "completion": 454
+          },
+          "ULTRA": {
+            "calls": 1,
+            "tokens": 1282,
+            "prompt": 772,
+            "completion": 300
+          }
+        },
+        "model_breakdown": {
+          "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B": {
+            "calls": 1,
+            "tokens": 1120,
+            "prompt": 464,
+            "completion": 480
+          },
+          "nvidia/nemotron-3-super-120b-a12b": {
+            "calls": 1,
+            "tokens": 1319,
+            "prompt": 543,
+            "completion": 454
+          },
+          "nvidia/Nemotron-3-Ultra-550b-a55b": {
+            "calls": 1,
+            "tokens": 1282,
+            "prompt": 772,
+            "completion": 300
+          }
+        }
+      },
+      "nebius_nemotron_inference": {
+        "provider": "Nebius Token Factory",
+        "endpoint": "https://api.tokenfactory.nebius.com/v1/chat/completions",
+        "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+        "tokens_used": 1282,
+        "reasoning_tokens": null,
+        "latency_ms": 2376.7,
+        "validation_status": "ACCEPTED"
+      },
+      "environment": {
+        "has_manifest": true,
+        "detected_dependencies": [
+          "pyyaml==5.3.1",
+          "pytest>=7.0.0"
+        ],
+        "provisioned": true,
+        "python_version": "Python 3.12 (OCI Rootless Container)",
+        "python_executable": "",
+        "venv_path": null,
+        "wheel_cache_dir": null,
+        "build_duration_ms": 0.58,
+        "build_output": "Dependencies provisioned in OCI base image (2 detected).",
+        "pip_log_excerpt": null,
+        "failure_classification": null,
+        "failure_reason": null,
+        "network_isolated": true,
+        "notes": "OCI container image pre-provisioned with verified runtime dependencies."
+      }
+    }
+  },
+  "verification_harness": {
+    "sha256": "8943075fd9fa1dd5e4f1cc7750b68879b308d10d79aa647d94ca217f01ff85f6",
+    "target_file": "services/yaml_parser.py",
+    "function_name": "parse_custom_config",
+    "sentinel_marker": "_sentinel_44da971a.marker",
+    "latency_ms": 0.06,
+    "source_code": "\"\"\"\nAutomated Behavioral Verification Harness for CVE-2020-14343\nGenerated dynamically by VulnTrace Verification Engine.\nTarget: services.yaml_parser.parse_custom_config()\nVulnerable Symbol: yaml.load\n\"\"\"\nimport sys\nimport os\nimport json\nfrom pathlib import Path\n\n# Anti-evasion normalization (P0.5.5)\n# Normalize sys.argv to prevent trivial environment detection by candidate code\nif sys.argv:\n    sys.argv[0] = \"services/yaml_parser.py\"\n\n# Network isolation guard: prevent child network access during behavioral verification\ntry:\n    import socket\n    class _BlockedSocket(socket.socket):\n        def __init__(self, *args, **kwargs):\n            raise PermissionError(\"Network access blocked during sandbox behavioral verification.\")\n    socket.socket = _BlockedSocket\n    socket.create_connection = _BlockedSocket\nexcept Exception:\n    pass\n\n# Compatibility shims for legacy frameworks\ntry:\n    import flask\n    if not hasattr(flask, 'Markup'):\n        import markupsafe\n        flask.Markup = markupsafe.Markup\n    if not hasattr(flask, 'json'):\n        import json as _std_json\n        flask.json = _std_json\n    elif not hasattr(flask.json, 'JSONEncoder'):\n        import json as _std_json\n        flask.json.JSONEncoder = getattr(_std_json, 'JSONEncoder', object)\nexcept Exception:\n    pass\n\n# Safe domain library imports for typed defensive assertions\ntry:\n    import yaml\n    sec_block_types = (yaml.constructor.ConstructorError, yaml.parser.ParserError, yaml.YAMLError)\nexcept Exception:\n    class _EmptySecBlock(Exception): pass\n    sec_block_types = (_EmptySecBlock,)\n\n# Target module import\ntry:\n    from services.yaml_parser import parse_custom_config\nexcept Exception as import_err:\n    print(json.dumps({\n        \"sink_reached\": False,\n        \"assertion_evaluated\": False,\n        \"risky_effect_observed\": False,\n        \"expected_security_exception\": False,\n        \"unexpected_exception\": True,\n        \"exception_type\": type(import_err).__name__,\n        \"assertion\": \"UNEXPECTED_FAILURE\",\n        \"detail\": f\"Failed to import target module services.yaml_parser: {import_err}\"\n    }))\n    sys.exit(1)\n\n# Target invocation helper supporting direct arguments, carrier objects, and custom signatures\ndef _invoke_target(target_fn, inp):\n    import inspect\n    sig = None\n    try:\n        sig = inspect.signature(target_fn)\n    except Exception:\n        pass\n    if sig:\n        params = list(sig.parameters.values())\n        if len(params) >= 2:\n            p0 = params[0].name.lower()\n            p1 = params[1].name.lower()\n            if any(k in p0 for k in [\"obj\", \"target\", \"func\", \"view\"]) and any(k in p1 for k in [\"doc\", \"process\", \"sanit\"]):\n                def _carrier():\n                    pass\n                carrier_doc = str(inp)\n                if \"\\n---\" not in carrier_doc and not carrier_doc.strip().startswith(\"---\"):\n                    carrier_doc = f\"Summary line\\nDescription line\\n---\\n{carrier_doc}\"\n                _carrier.__doc__ = carrier_doc\n                res_tuple = target_fn(_carrier, lambda d: d)\n                if isinstance(res_tuple, tuple):\n                    for item in reversed(res_tuple):\n                        if item is not None:\n                            return item\n                    return res_tuple\n                return res_tuple\n    return target_fn(inp)\n\nsentinel = Path(\"_sentinel_44da971a.marker\")\nif sentinel.exists():\n    try:\n        sentinel.unlink()\n    except Exception:\n        pass\n\n# Benign sentinel marker verification payload\npayload = \"\"\"\nexploit: !!python/object/apply:builtins.eval [\"open('_sentinel_44da971a.marker', 'w').close()\"]\n\"\"\"\n\ntry:\n    # Execute target function in isolated sandbox\n    res = _invoke_target(parse_custom_config, payload)\n\n    # Check if risky behavior materialized\n    if sentinel.exists():\n        print(json.dumps({\n            \"sink_reached\": True,\n            \"assertion_evaluated\": True,\n            \"risky_effect_observed\": True,\n            \"expected_security_exception\": False,\n            \"unexpected_exception\": False,\n            \"exception_type\": None,\n            \"assertion\": \"RED_PASSED\",\n            \"detail\": \"Risky behavioral path executed; sentinel marker created.\"\n        }))\n        sys.exit(0)\n    else:\n        print(json.dumps({\n            \"sink_reached\": True,\n            \"assertion_evaluated\": True,\n            \"risky_effect_observed\": False,\n            \"expected_security_exception\": False,\n            \"unexpected_exception\": False,\n            \"exception_type\": None,\n            \"assertion\": \"INCONCLUSIVE_NO_EFFECT\",\n            \"detail\": \"Target executed without triggering sentinel or security exception.\"\n        }))\n        sys.exit(10)\n\nexcept sec_block_types as sec_err:\n    # Explicit behavioral assertion: Verify expected defensive block occurred\n    err_name = type(sec_err).__name__\n    err_str = str(sec_err)\n\n    if not sentinel.exists():\n        # Multi-Input Behavioral Preservation Contract (P0.5.4)\n        try:\n            benign_cases = [\n    {\n        \"id\": \"flat_service_mapping\",\n        \"input\": \"\"\"service: auth\\nport: 9000\"\"\",\n        \"req_type\": dict,\n        \"req_keys\": [\"service\", \"port\"],\n        \"check\": lambda r: r.get(\"service\") == \"auth\" and r.get(\"port\") == 9000\n    },\n    {\n        \"id\": \"nested_hierarchy_mapping\",\n        \"input\": \"\"\"service: core-api\\nnested:\\n  workers: 4\\n  enabled: true\"\"\",\n        \"req_type\": dict,\n        \"req_keys\": [\"service\", \"nested\"],\n        \"check\": lambda r: isinstance(r.get(\"nested\"), dict) and r[\"nested\"].get(\"workers\") == 4 and r[\"nested\"].get(\"enabled\") is True\n    },\n    {\n        \"id\": \"multi_type_mapping\",\n        \"input\": \"\"\"database:\\n  host: localhost\\n  port: 5432\\n  endpoints:\\n    - primary\\n    - replica\"\"\",\n        \"req_type\": dict,\n        \"req_keys\": [\"database\"],\n        \"check\": lambda r: isinstance(r.get(\"database\"), dict) and r[\"database\"].get(\"port\") == 5432 and isinstance(r[\"database\"].get(\"endpoints\"), list) and len(r[\"database\"][\"endpoints\"]) == 2\n    }\n]\n            executed_contracts = []\n\n            for case in benign_cases:\n                c_id = case[\"id\"]\n                r = _invoke_target(parse_custom_config, case[\"input\"])\n\n                if r is None:\n                    raise ValueError(f\"Contract '{c_id}' failed: returned None\")\n\n                expected_t = case[\"req_type\"]\n                if not isinstance(r, expected_t):\n                    raise TypeError(f\"Contract '{c_id}' failed: expected {expected_t}, got {type(r).__name__}\")\n\n                if isinstance(r, (dict, list, str, set)) and len(r) == 0:\n                    raise ValueError(f\"Contract '{c_id}' failed: returned empty dummy container\")\n\n                if isinstance(r, dict):\n                    for req_k in case.get(\"req_keys\", []):\n                        if req_k not in r:\n                            raise KeyError(f\"Contract '{c_id}' failed: missing required key '{req_k}'\")\n                        if r[req_k] is None:\n                            raise ValueError(f\"Contract '{c_id}' failed: key '{req_k}' has None value; expected non-null data\")\n\n                if \"check\" in case and not case[\"check\"](r):\n                    raise ValueError(f\"Contract '{c_id}' failed: structural invariant or semantic value check failed\")\n\n                executed_contracts.append(c_id)\n\n            print(json.dumps({\n                \"sink_reached\": True,\n                \"assertion_evaluated\": True,\n                \"risky_effect_observed\": False,\n                \"expected_security_exception\": True,\n                \"unexpected_exception\": False,\n                \"exception_type\": err_name,\n                \"positive_control_passed\": True,\n                \"contracts_verified\": executed_contracts,\n                \"assertion\": \"GREEN_SECURITY_BLOCK_VERIFIED\",\n                \"detail\": f\"Expected defensive security block verified ({err_name}) and all {len(executed_contracts)} behavioral preservation contracts verified.\"\n            }))\n            sys.exit(42)  # Dedicated exit code for verified defensive block\n\n        except Exception as benign_err:\n            b_name = type(benign_err).__name__\n            print(json.dumps({\n                \"sink_reached\": True,\n                \"assertion_evaluated\": True,\n                \"risky_effect_observed\": False,\n                \"expected_security_exception\": False,\n                \"unexpected_exception\": True,\n                \"exception_type\": b_name,\n                \"positive_control_passed\": False,\n                \"assertion\": \"POSITIVE_CONTROL_FAILED\",\n                \"detail\": f\"Behavioral preservation contract failed: {b_name}: {str(benign_err)}\"\n            }))\n            sys.exit(1)\n    else:\n        print(json.dumps({\n            \"sink_reached\": True,\n            \"assertion_evaluated\": True,\n            \"risky_effect_observed\": True,\n            \"expected_security_exception\": True,\n            \"unexpected_exception\": False,\n            \"exception_type\": err_name,\n            \"assertion\": \"INCONCLUSIVE_ERROR_WITH_SENTINEL\",\n            \"detail\": \"Exception raised but sentinel file was created.\"\n        }))\n        sys.exit(10)\n\nexcept Exception as unexpected_err:\n    # Check if this was a pre-validation guard\n    u_name = type(unexpected_err).__name__\n    u_str = str(unexpected_err).lower()\n    is_guard = any(w in u_str for w in [\"validation\", \"invalid input\", \"malformed\", \"blocked by guard\", \"untrusted\", \"disallowed\", \"guard\", \"security violation\", \"forbidden\", \"pre-filter\"])\n\n    if is_guard:\n        print(json.dumps({\n            \"sink_reached\": False,\n            \"assertion_evaluated\": True,\n            \"risky_effect_observed\": False,\n            \"expected_security_exception\": False,\n            \"unexpected_exception\": True,\n            \"exception_type\": u_name,\n            \"assertion\": \"INCONCLUSIVE_GUARD_BLOCKED\",\n            \"detail\": f\"Pre-validation guard prevented execution: {u_name}: {str(unexpected_err)}\"\n        }))\n        sys.exit(10)\n    else:\n        # Unexpected crash / broken code\n        print(json.dumps({\n            \"sink_reached\": False,\n            \"assertion_evaluated\": False,\n            \"risky_effect_observed\": False,\n            \"expected_security_exception\": False,\n            \"unexpected_exception\": True,\n            \"exception_type\": u_name,\n            \"assertion\": \"UNEXPECTED_FAILURE\",\n            \"detail\": f\"Unexpected execution error: {u_name}: {str(unexpected_err)}\"\n        }))\n        sys.exit(1)"
+  },
+  "behavioral_verification": {
+    "pre_patch": {
+      "exit_code": 0,
+      "reproduction_state": "RED_STATE_REPRODUCED",
+      "sentinel_created": true,
+      "assertion_result": "RED_PASSED",
+      "exception_type": null,
+      "parent_validated": true,
+      "validation_notes": "Parent verified: exit code 0, physical sentinel marker created on disk.",
+      "latency_ms": 1362.86,
+      "stdout": "{\"sink_reached\": true, \"assertion_evaluated\": true, \"risky_effect_observed\": true, \"expected_security_exception\": false, \"unexpected_exception\": false, \"exception_type\": null, \"assertion\": \"RED_PASSED\", \"detail\": \"Risky behavioral path executed; sentinel marker created.\"}\n",
+      "stderr": ""
+    },
+    "post_patch": {
+      "exit_code": 42,
+      "reproduction_state": "GREEN_STATE_BLOCKED",
+      "sentinel_created": false,
+      "assertion_result": "GREEN_SECURITY_BLOCK_VERIFIED",
+      "exception_type": "ConstructorError",
+      "parent_validated": true,
+      "validation_notes": "Parent verified: exit code 42, zero sentinel markers, typed security exception evaluated, positive control passed.",
+      "latency_ms": 882.77,
+      "stdout": "{\"sink_reached\": true, \"assertion_evaluated\": true, \"risky_effect_observed\": false, \"expected_security_exception\": true, \"unexpected_exception\": false, \"exception_type\": \"ConstructorError\", \"positive_control_passed\": true, \"contracts_verified\": [\"flat_service_mapping\", \"nested_hierarchy_mapping\", \"multi_type_mapping\"], \"assertion\": \"GREEN_SECURITY_BLOCK_VERIFIED\", \"detail\": \"Expected defensive security block verified (ConstructorError) and all 3 behavioral preservation contracts verified.\"}\n",
+      "stderr": ""
+    }
+  },
+  "remediation_evidence": {
+    "engine": "NVIDIA_NEMOTRON_3_ULTRA",
+    "sha256": "cf6d13e8337f3ef4c2ec081a085b7b9020b495107d3846e070bc53a733d1d006",
+    "validation_status": "ACCEPTED",
+    "tokens_used": 1282,
+    "reasoning_tokens": null,
+    "latency_ms": 2376.7,
+    "success": true,
+    "diff": "--- a/services/yaml_parser.py\n+++ b/services/yaml_parser.py\n@@ -3,8 +3,8 @@\n \n def parse_custom_config(raw_yaml: str) -> dict:\n     \"\"\"Parses arbitrary YAML configuration payload.\"\"\"\n-    # Vulnerable deserialization sink (CVE-2020-14343)\n-    data = yaml.load(raw_yaml, Loader=yaml.Loader)\n+    # Safe deserialization (CVE-2020-14343 remediation)\n+    data = yaml.safe_load(raw_yaml)\n     if isinstance(data, dict):\n         return data\n-    return {\"parsed\": data}\n+    return {\"parsed\": data}",
+    "explanation": "Synthesized surgical remediation using Nemotron 3 Ultra.",
+    "patch_delta": {
+      "changed_files": [
+        "services/yaml_parser.py"
+      ],
+      "changed_functions": [
+        "yaml.load"
+      ],
+      "additions_count": 3,
+      "deletions_count": 3,
+      "total_lines_changed": 6,
+      "diff_bytes": 495,
+      "is_minimal": true,
+      "minimality_criterion": "Minimal: 6 lines across 1 file(s) (threshold: <= 10 lines, 1 file)",
+      "tests_affected_count": 0,
+      "reason_for_change": "Synthesized surgical remediation using Nemotron 3 Ultra."
+    }
+  },
+  "regression_evidence": {
+    "passed": true,
+    "test_count": 2,
+    "latency_ms": 1387.13,
+    "error": null
+  },
+  "environment_boundary": {
+    "sandbox_engine": "OCI_CONTAINER_ISOLATED",
+    "cloud_status": "PERMISSION_DENIED (HTTP 403)",
+    "isolation_properties": {
+      "filesystem": "disposable copy in %TEMP%",
+      "credentials": "environment variables purged of secrets",
+      "watchdog": "taskkill process tree termination after timeout",
+      "limitations": "shared host kernel, host localhost loopback"
+    }
+  },
+  "final_verdict": {
+    "terminal_state": "GREEN_STATE_VERIFIED",
+    "reason": "Reachable vulnerability reproduced in red state, remediated with valid diff, verified in green state, and passed regression test suite.",
+    "total_pipeline_ms": 21455.79,
+    "is_safe_claim": false,
+    "limitations": [
+      "Static AST reachability cannot analyze runtime reflection or monkey-patching.",
+      "Verification proves behavioral security block for evaluated exploit harness, not universal absence of flaws.",
+      "Executed in LOCAL_SUBPROCESS_FALLBACK."
+    ]
+  }
+}

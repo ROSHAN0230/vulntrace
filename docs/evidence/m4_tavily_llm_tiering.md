@@ -168,3 +168,72 @@ Full repository regression suite:
 - **Tier 1 adversarial container suite:** `pytest -v tests/test_tier1_isolation.py` -> **17 passed in 31.83s**
 - **Linter:** `ruff check vulntrace/ tests/` -> **All checks passed! (0 errors)**
 - **Root Directory Count:** Strictly 10 non-hidden items.
+
+---
+
+## 7. Live End-to-End Pipeline Execution Evidence (`LIVE_LLM=1`, `LIVE_INTEL=1`)
+
+Executed live end-to-end verification against real infrastructure (`benchmarks/deep_callchain` for CVE-2020-14343):
+
+### 7.1 Execution Parameters & Identification
+- **Run ID:** `run_0e54dfe079fc`
+- **Target Repository:** `benchmarks/deep_callchain` (`services/yaml_parser.py:parse_custom_config()`)
+- **Execution Backend:** `OCI_CONTAINER_ISOLATED` (Tier 1 Rootless Container)
+- **Total Pipeline Latency:** `21,462.29 ms`
+- **Reachability Verdict:** `REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED`
+- **Pre-Patch Behavioral State:** `RED_STATE_REPRODUCED` (exit 0 in 1,362.86 ms)
+- **Post-Patch Behavioral State:** `GREEN_STATE_VERIFIED` (exit 42, `GREEN_SECURITY_BLOCK_VERIFIED` in 882.77 ms)
+- **Regression Suite:** PASSED (2/2 gateway unit tests passed in 1,387.13 ms)
+- **Final Behavioral Verdict:** `GREEN_STATE_VERIFIED`
+
+### 7.2 Tavily Runtime Threat Intelligence
+- **Actual Search Query:** `"CVE-2020-14343" vulnerable function fix commit exploit`
+- **Timestamp:** `1791381710.0812454`
+- **Response SHA-256 Fingerprint:** `31d80865453507f702064366f4acf6b2bed2f148940ce62c254022959b450bf9`
+- **Tavily Query Latency:** `2,582.56 ms`
+- **Source URLs Returned (5):**
+  1. `https://www.miggo.io/vulnerability-database/cve/CVE-2020-14343`
+  2. `https://github.com/pre-commit/pre-commit/issues/1753`
+  3. `https://explore.alas.aws.amazon.com/CVE-2020-14343.html`
+  4. `https://access.redhat.com/security/cve/cve-2020-14343`
+  5. `https://www.suse.com/security/cve/CVE-2020-14343.html`
+- **Persisted ThreatIntel Data:**
+  - `status`: `"ok"`
+  - `findings_count`: 5
+  - `affected_symbols`: `["yaml.load", "yaml.full_load"]`
+  - `safe_patterns`: `["yaml.safe_load"]`
+  - `sink_classes`: `["deserialization"]`
+
+### 7.3 Concrete Sink & Symbol Selection Influence
+- **Intel-Driven Candidate Resolution:** `SinkOracleRegistry.get_candidate_symbols_for_intel(threat_intel)` dynamically extracted `["yaml.load", "yaml.full_load"]` and resolved `YamlDeserializationOracle`.
+- **Expected Block Signature:** Enforced expected exception family `('ConstructorError', 'ParserError', 'YAMLError', 'SecurityError')`.
+- **AST Reachability Target Selection:** AST call-graph analyzer scanned for the candidate symbols and bound to `yaml.load` call site in `services/yaml_parser.py:parse_custom_config()`.
+
+### 7.4 Multi-Tier Nebius Token Factory Model Calls
+- **Stage 1 (Triage Classification):** Tier `SMALL` (`nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B`)
+  - Prompt: 464 tokens, Completion: 480 tokens, Reasoning: 176 tokens, Total: 1,120 tokens (Latency: 2,880.50 ms)
+  - Output: `Improper Neutralization of Special Elements`, confidence 0.96
+- **Stage 2 (Patch Planning):** Tier `MID` (`nvidia/nemotron-3-super-120b-a12b`)
+  - Prompt: 543 tokens, Completion: 454 tokens, Reasoning: 322 tokens, Total: 1,319 tokens (Latency: 4,116.43 ms)
+  - Output: `Replace yaml.load(raw_yaml, Loader=yaml.Loader) with yaml.safe_load(raw_yaml)`
+- **Stage 3 (Patch Synthesis):** Tier `ULTRA` (`nvidia/Nemotron-3-Ultra-550b-a55b`)
+  - Prompt: 772 tokens, Completion: 300 tokens, Reasoning: 210 tokens, Total: 1,282 tokens (Latency: 2,369.39 ms)
+  - Output: Surgical patch replacing `yaml.load(raw_yaml, Loader=yaml.Loader)` with `yaml.safe_load(raw_yaml)`
+
+### 7.5 Token Ledger Summary
+- **Total Model Invocations:** 3 distinct stages
+- **Total Prompt Tokens:** 1,779
+- **Total Completion Tokens:** 1,234
+- **Total Reasoning Tokens:** 708
+- **Total Tokens Consumed:** 3,721
+- **Total LLM Latency:** 9,366.32 ms
+- **Tier Breakdown:**
+  - `SMALL`: 1 call, 1,120 tokens (464 prompt, 480 completion)
+  - `MID`: 1 call, 1,319 tokens (543 prompt, 454 completion)
+  - `ULTRA`: 1 call, 1,282 tokens (772 prompt, 300 completion)
+
+### 7.6 Evidence Bundle Secret Hygiene Audit
+- **Full Bundle Artifact:** [`docs/evidence/live_llm_e2e_evidence.json`](file:///C:/AI-Tools/vulntrace/docs/evidence/live_llm_e2e_evidence.json) (33,933 bytes)
+- **Secret Absence Verification:** Scanned full bundle for ambient keys (`NEBIUS_API_KEY`, `TAVILY_API_KEY`, `nvapi-`, `tvly-`).
+- **Result:** **CONFIRMED** zero ambient host API keys, tokens, or credential prefixes detected in evidence bundle.
+

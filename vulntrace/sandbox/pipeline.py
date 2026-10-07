@@ -60,6 +60,7 @@ class VerificationPipeline:
         backend: Optional[ExecutionBackend] = None
     ) -> VerificationPipelineResponse:
         t0 = time.perf_counter()
+        run_id = f"run_{uuid.uuid4().hex[:12]}"
         source_repo = Path(req.repo_path).resolve()
         if backend is None:
             tier_override = None
@@ -226,6 +227,7 @@ class VerificationPipeline:
             )
 
             return VerificationPipelineResponse(
+                run_id=run_id,
                 cve_id=req.cve_id,
                 repo_path=str(source_repo),
                 reachability_verdict="NOT_EVALUATED",
@@ -441,6 +443,7 @@ class VerificationPipeline:
                 )
 
                 return VerificationPipelineResponse(
+                    run_id=run_id,
                     cve_id=req.cve_id,
                     repo_path=str(source_repo),
                     reachability_verdict="UNREACHABLE_FALSE_POSITIVE",
@@ -566,6 +569,7 @@ class VerificationPipeline:
                 emit("STATE_TRANSITION", "VERDICT", f"FINAL BEHAVIORAL VERDICT: {verdict_rec.terminal_state} (Total: {round(dt_total, 2)}ms)")
 
                 return VerificationPipelineResponse(
+                    run_id=run_id,
                     cve_id=req.cve_id,
                     repo_path=str(source_repo),
                     reachability_verdict=reachability_verdict,
@@ -736,6 +740,7 @@ class VerificationPipeline:
                 emit("STATE_TRANSITION", "VERDICT", f"FINAL BEHAVIORAL VERDICT: {verdict_rec.terminal_state} (Total: {round(dt_total, 2)}ms)")
 
                 return VerificationPipelineResponse(
+                    run_id=run_id,
                     cve_id=req.cve_id,
                     repo_path=str(source_repo),
                     reachability_verdict=reachability_verdict,
@@ -861,6 +866,7 @@ class VerificationPipeline:
 
             pipeline_evidence["environment"] = env_evidence.model_dump()
             return VerificationPipelineResponse(
+                run_id=run_id,
                 cve_id=req.cve_id,
                 repo_path=str(source_repo),
                 reachability_verdict=reachability_verdict,

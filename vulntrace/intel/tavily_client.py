@@ -151,8 +151,9 @@ class TavilyClient:
                     else:
                         rejection_reasons.append(f"Excluded: '{title}' ({url}) does not reference target {cve_id}")
 
-                # Save cassette for offline replay in CI
-                IntelCassetteManager.save_cassette(cve_id, query_str, data)
+                # Save cassette for offline replay in CI when explicitly requested
+                if IntelCassetteManager.is_recording_enabled():
+                    IntelCassetteManager.save_cassette(cve_id, query_str, data)
 
                 return TavilySearchReport(
                     cve_id=cve_id,

@@ -22,6 +22,11 @@ class LLMCassetteManager:
         return os.environ.get("LIVE_LLM", "0") == "1"
 
     @classmethod
+    def is_recording_enabled(cls) -> bool:
+        """Checks if recording new cassettes is explicitly enabled via RECORD_CASSETTES."""
+        return os.environ.get("RECORD_CASSETTES", "0") == "1"
+
+    @classmethod
     def compute_fingerprint(cls, model: str, messages: List[Dict[str, str]]) -> str:
         """Computes deterministic hash from model ID and message contents."""
         content_blob = f"{model.strip()}::" + "::".join(

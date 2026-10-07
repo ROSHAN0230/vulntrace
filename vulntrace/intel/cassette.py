@@ -21,6 +21,11 @@ class IntelCassetteManager:
         return os.environ.get("LIVE_LLM", "0") == "1" or os.environ.get("LIVE_INTEL", "0") == "1"
 
     @classmethod
+    def is_recording_enabled(cls) -> bool:
+        """Checks if recording new cassettes is explicitly enabled via RECORD_CASSETTES."""
+        return os.environ.get("RECORD_CASSETTES", "0") == "1"
+
+    @classmethod
     def _compute_key(cls, cve_id: str, query: str) -> str:
         norm = f"{cve_id.strip().upper()}:{query.strip().lower()}"
         return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]

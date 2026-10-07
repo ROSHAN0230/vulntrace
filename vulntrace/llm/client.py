@@ -173,17 +173,18 @@ class TokenFactoryClient:
                     or (len(msg.get("reasoning", "").split()) if msg.get("reasoning") else 0)
                 )
 
-                # Save cassette for offline reproducibility
-                LLMCassetteManager.save_cassette(fingerprint, {
-                    "model": model_name,
-                    "content": content,
-                    "usage": {
-                        "prompt_tokens": prompt_tok,
-                        "completion_tokens": comp_tok,
-                        "reasoning_tokens": reasoning_tok,
-                        "total_tokens": prompt_tok + comp_tok
-                    }
-                })
+                # Save cassette for offline reproducibility when explicitly requested
+                if LLMCassetteManager.is_recording_enabled():
+                    LLMCassetteManager.save_cassette(fingerprint, {
+                        "model": model_name,
+                        "content": content,
+                        "usage": {
+                            "prompt_tokens": prompt_tok,
+                            "completion_tokens": comp_tok,
+                            "reasoning_tokens": reasoning_tok,
+                            "total_tokens": prompt_tok + comp_tok
+                        }
+                    })
 
                 rec = self.ledger.record_call(
                     stage=stage,

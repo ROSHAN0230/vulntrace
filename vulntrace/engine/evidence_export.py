@@ -23,9 +23,13 @@ class EvidenceExporter:
         harness_hash = cls._compute_hash(run.harness.harness_code) if run.harness else None
         patch_hash = cls._compute_hash(run.remediation.diff) if run.remediation and run.remediation.diff else None
 
+        run_id_val = getattr(run, "run_id", None) or f"run_{hashlib.sha256(f'{run.cve_id}:{run.repo_path}:{time.time()}'.encode()).hexdigest()[:12]}"
         bundle = {
             "schema_version": "1.0.0",
+            "run_id": run_id_val,
             "export_timestamp": time.time(),
+            "threat_intel": run.threat_intel.model_dump() if getattr(run, "threat_intel", None) else None,
+            "token_ledger": run.token_ledger.model_dump() if getattr(run, "token_ledger", None) else None,
             "target": {
                 "cve_id": run.cve_id,
                 "repository_path": run.repo_path,
