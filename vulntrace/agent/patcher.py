@@ -12,6 +12,7 @@ from typing import Optional
 from vulntrace.agent.nemotron_client import NemotronClient
 from vulntrace.models import RemediationRequest, RemediationResponse
 from vulntrace.llm.ledger import TokenLedger
+from vulntrace.llm.cassette import LLMCassetteManager
 
 class RemediationPatcher:
     """Remediation synthesizer combining live Nemotron 3 Ultra and deterministic AST codemods."""
@@ -80,7 +81,7 @@ class RemediationPatcher:
         # 1. Attempt live Nemotron inference if requested
         if req.use_nemotron:
             client = NemotronClient(ledger=ledger)
-            if not client.api_key:
+            if LLMCassetteManager.is_live_enabled() and not client.api_key:
                 if not req.allow_ast_fallback:
                     dt = (time.perf_counter() - t0) * 1000.0
                     return RemediationResponse(

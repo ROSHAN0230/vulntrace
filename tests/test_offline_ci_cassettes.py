@@ -95,11 +95,18 @@ async def test_llm_tiered_offline_cassette_zero_network(block_network):
 
 
 @pytest.mark.asyncio
-async def test_pipeline_offline_execution_zero_network(block_network):
+async def test_pipeline_offline_execution_zero_network(block_network, monkeypatch):
     """
     Verifies that the entire defensive verification pipeline can execute
-    with network strictly blocked, producing valid ThreatIntel and TokenLedger evidence.
+    with network strictly blocked and ambient credentials stripped, producing valid
+    ThreatIntel and TokenLedger evidence from offline cassettes.
     """
+    from vulntrace.config import settings
+    monkeypatch.delenv("NEBIUS_API_KEY", raising=False)
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.setattr(settings, "nebius_api_key", None)
+    monkeypatch.setattr(settings, "tavily_api_key", None)
+
     repo_path = (Path(__file__).resolve().parent.parent / "benchmarks" / "contextual_reasoning").resolve()
     assert repo_path.exists()
 
@@ -130,3 +137,50 @@ async def test_pipeline_offline_execution_zero_network(block_network):
     assert res.token_ledger.total_calls >= 2
     assert res.token_ledger.total_tokens > 0
     assert "SMALL" in res.token_ledger.tier_breakdown or "ULTRA" in res.token_ledger.tier_breakdown
+
+
+@pytest.mark.asyncio
+async def test_pipeline_offline_execution_zero_ambient_keys(block_network, monkeypatch):
+    """
+    Verifies that the entire defensive verification pipeline completes offline
+    when NEBIUS_API_KEY and TAVILY_API_KEY are completely stripped from the environment,
+    exactly matching the clean, unauthenticated GitHub Actions CI runner.
+    """
+    from vulntrace.config import settings
+    monkeypatch.delenv("NEBIUS_API_KEY", raising=False)
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.setattr(settings, "nebius_api_key", None)
+    monkeypatch.setattr(settings, "tavily_api_key", None)
+
+    repo_path = (Path(__file__).resolve().parent.parent / "benchmarks" / "contextual_reasoning").resolve()
+    assert repo_path.exists()
+
+    req = VerificationPipelineRequest(
+        repo_path=str(repo_path),
+        cve_id="CVE-2020-14343",
+        target_file="service/custom_loader.py",
+        target_function="parse_app_config",
+        vulnerable_symbol="yaml.load",
+        use_nemotron=True
+    )
+
+    res = await VerificationPipeline.run_pipeline(req)
+
+    # Verification checks
+    assert res.reachability_verdict == "REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED"
+    assert res.pre_patch_result.reproduction_state == "RED_STATE_REPRODUCED"
+    assert res.remediation.success is True
+    assert res.remediation.engine == "NVIDIA_NEMOTRON_3_ULTRA"
+    assert res.post_patch_result.reproduction_state == "GREEN_STATE_BLOCKED"
+    assert res.final_behavioral_verdict == "GREEN_STATE_VERIFIED"
+
+    # M4 Evidence Guarantees: ThreatIntel + TokenLedger under zero credentials
+    assert res.threat_intel is not None
+    assert res.threat_intel.cve_id == "CVE-2020-14343"
+    assert len(res.threat_intel.response_hash) == 64
+
+    assert res.token_ledger is not None
+    assert res.token_ledger.total_calls >= 2
+    assert res.token_ledger.total_tokens > 0
+    assert "ULTRA" in res.token_ledger.tier_breakdown
+

@@ -9,6 +9,7 @@ from vulntrace.config import settings
 from vulntrace.llm.tier import LLMModelTier
 from vulntrace.llm.client import TokenFactoryClient
 from vulntrace.llm.ledger import TokenLedger
+from vulntrace.llm.cassette import LLMCassetteManager
 
 
 class NemotronClient:
@@ -38,7 +39,7 @@ class NemotronClient:
         advisory_summary: str,
         model_name: Optional[str] = None
     ) -> Dict[str, Any]:
-        if not self.api_key and not self._client.api_key:
+        if LLMCassetteManager.is_live_enabled() and not self.api_key and not self._client.api_key:
             return {
                 "success": False,
                 "error": "Nebius Token Factory API key not configured.",
