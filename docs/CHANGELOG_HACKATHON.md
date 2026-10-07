@@ -2,6 +2,28 @@
 
 All major project updates and milestones completed during the Nebius × NVIDIA Global AI Hackathon 2026.
 
+## [M5] Studio Backend & Evidence Signing — 2026-10-07
+- **Ingest Security Guards (Spec §4.14):** Implemented `vulntrace/ingest/` with `ZipUploadGuard` and `GitCloneGuard`. Enforces zip-slip rejection (`ZipSlipError`), symlink escape neutralization (`SymlinkEscapeError`), decompression bomb detection (`DecompressionBombError`, 100:1 ratio and 200MB limit, file count limit). Enforces git clone hardening: HTTPS-only protocol, embedded credential scrubbing, shallow clone (`--depth 1`), git hooks strictly disabled (`-c core.hooksPath=NUL|/dev/null`), filesystem monitoring disabled (`-c core.fsmonitor=false`), and submodules blocked (`--no-recurse-submodules`).
+- **Plan Approval & Scope Guard (Spec §4.10):** Implemented `vulntrace/agent/scope_guard.py` with `RepairPlan` and `ScopeGuard`. Parses unified diff additions/deletions, enforces allowed files (`files_to_touch`), diff line budget ($\le 30$ lines), and maximum touched files ($\le 3$ files). Emits `SCOPE_VIOLATION_BLOCKED` when patches attempt out-of-plan modifications.
+- **Unified Diff & Workspace Export (Spec §4.12):** Implemented `vulntrace/export/` with `DiffExporter` and `ZipExporter`. Normalizes unified diffs with LF line endings and verifies clean applicability via `git apply --check`. Safely packages disposable workspaces into portable zip distributions with default exclusions (`.git`, `__pycache__`, `.venv`, etc.).
+- **Evidence Schema v1 & RFC 8032 Pure-Python Ed25519 Signing (Spec §4.11):** Formally authored `docs/evidence/schema_v1.json`. Implemented canonical JSON serialization (`canonical_json_bytes`) with RFC 8785 lexicographical key sorting, strict compact delimiters, and SHA-256 fingerprinting. Implemented zero-dependency pure-Python Ed25519 curve arithmetic (`EvidenceSigner` and `KeyManager`) generating keypairs in `~/.vulntrace/keys/`. Proved tamper detection: modifying even a single byte in any payload field causes cryptographic verification failure.
+- **CLI Verification Tooling (Spec §4.11):** Added `vulntrace verify-bundle <bundle.json>` CLI entrypoint via `vulntrace/cli.py` and `pyproject.toml` console scripts. Exits 0 with human-readable summary on authentic bundles, and exits 1 with failure details on tampered bundles.
+- **Studio Backend Server & SSE Streaming (Spec §4.12):** Implemented `StudioDatabase` (`vulntrace/server/db.py`) managing SQLite tables for `runs`, `events`, `artifacts`, and `llm_calls`. Consolidated backend routing in `vulntrace/server/app.py`, providing unified support for legacy `/api/v1/*` endpoints and Studio `/runs*` REST and SSE streaming endpoints.
+- **Real Execution Bugs Caught & Fixed:**
+  1. *Ambiguous Variable Name in Curve Arithmetic:* In `signing.py`, `I = pow(2, (P - 1) // 4, P)` triggered Ruff `E741`; renamed to `SQRT_M1`.
+  2. *Package/Module Collision on `vulntrace/server`:* Subdirectory `vulntrace/server/` shadowed `vulntrace/server.py`, causing 404s on legacy `/api/v1/*` routes in `test_api_endpoints.py`; unified all routes into `vulntrace/server/app.py` and cleanly removed redundant `server.py`.
+  3. *Unused Variable Assignment:* `record = db.create_run(...)` in `app.py` triggered Ruff `F841`; cleaned up assignment.
+  4. *Key Directory Keyword Mismatch:* `test_evidence_signing.py` passed `keys_dir` instead of `key_dir` to `KeyManager.get_or_create_keys`; corrected parameter name.
+  5. *Database Event Return Semantics:* `StudioDatabase.add_event` did not return the newly created event object, causing `NoneType` subscript errors in SSE event streaming; updated to return populated event record with `lastrowid`.
+  6. *Pydantic v2 Query Pattern Compatibility:* Deprecated `regex` parameter in FastAPI `Query` updated to `pattern`.
+- **Test Suites & Quality Gates:**
+  - 29 new M5 tests across 5 test suites: `test_ingest_guards.py` (11 passed), `test_scope_guard.py` (5 passed), `test_diff_export.py` (4 passed), `test_evidence_signing.py` (5 passed), `test_studio_server.py` (4 passed).
+  - Full non-container test suite: 170 passed, 38 deselected in 268.58s.
+  - Tier-1 isolation test suite: 17 passed in 33.93s.
+  - Ruff linter: 100% clean (0 errors).
+
+---
+
 ## [M4] Tavily Runtime Threat Intel + LLM Tiering — 2026-10-06
 - **Tavily Runtime Threat Intelligence (Spec §4.7):** Integrated runtime threat intel gathering into the core verification pipeline (`vulntrace/intel/tavily_client.py` and `vulntrace/intel/threat_intel.py`). Generates canonical `ThreatIntel` models containing raw search queries, ISO timestamps, source URLs, response SHA-256 fingerprint, findings, affected symbols, safe patterns, and sink classes.
 - **Material AST & Oracle Influence:** Threat intelligence results actively guide static analysis and oracle dispatch: extracted candidate symbols expand AST reachability queries, and discovered sink classes resolve specific sink oracles via `SinkOracleRegistry.get_candidate_symbols_for_intel()` and `get_oracle_for_intel()`.

@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VulnTrace Evidence Bundle Schema v1",
+  "description": "Canonical schema for verifiable, cryptographically signed vulnerability reproduction and repair bundles (Spec §4.11).",
+  "type": "object",
+  "required": [
+    "run_id",
+    "created_at",
+    "tool_versions",
+    "python_version",
+    "source",
+    "sandbox",
+    "intel",
+    "analysis",
+    "spec",
+    "llm",
+    "verification",
+    "attempts",
+    "verdict",
+    "limitations",
+    "signature"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "description": "Unique deterministic execution identifier"
+    },
+    "created_at": {
+      "type": "string",
+      "description": "ISO-8601 creation timestamp"
+    },
+    "tool_versions": {
+      "type": "object",
+      "description": "Installed tool and agent versions"
+    },
+    "python_version": {
+      "type": "string",
+      "description": "Python runtime version used for execution"
+    },
+    "source": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["github", "upload", "local"] },
+        "url": { "type": "string" },
+        "upload_sha256": { "type": "string" },
+        "commit": { "type": "string" }
+      }
+    },
+    "sandbox": {
+      "type": "object",
+      "required": ["tier", "limits", "network_policy"],
+      "properties": {
+        "tier": { "type": "string" },
+        "limits": { "type": "object" },
+        "network_policy": { "type": "string" }
+      }
+    },
+    "intel": {
+      "type": "object",
+      "required": ["status", "queries", "urls", "response_hashes"],
+      "properties": {
+        "status": { "type": "string" },
+        "queries": { "type": "array", "items": { "type": "string" } },
+        "urls": { "type": "array", "items": { "type": "string" } },
+        "response_hashes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "analysis": {
+      "type": "object",
+      "required": ["findings", "reachability", "baseline_tests"],
+      "properties": {
+        "findings": { "type": "array" },
+        "reachability": { "type": "object" },
+        "baseline_tests": { "type": "object" }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "required": ["requirement", "parsed_spec", "acceptance_tests"],
+      "properties": {
+        "requirement": { "type": "string" },
+        "parsed_spec": { "type": "object" },
+        "acceptance_tests": { "type": "array" }
+      }
+    },
+    "llm": {
+      "type": "object",
+      "required": ["calls"],
+      "properties": {
+        "calls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["stage", "model", "prompt_tokens", "completion_tokens", "reasoning_tokens", "latency_ms"],
+            "properties": {
+              "stage": { "type": "string" },
+              "model": { "type": "string" },
+              "prompt_tokens": { "type": "integer" },
+              "completion_tokens": { "type": "integer" },
+              "reasoning_tokens": { "type": "integer" },
+              "latency_ms": { "type": "number" }
+            }
+          }
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "required": ["harness_sha256", "red_runs", "green_runs", "positive_control", "regression"],
+      "properties": {
+        "harness_sha256": { "type": "string" },
+        "red_runs": { "type": "array" },
+        "green_runs": { "type": "array" },
+        "positive_control": { "type": "object" },
+        "regression": { "type": "object" }
+      }
+    },
+    "attempts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["diff", "gates", "result"],
+        "properties": {
+          "diff": { "type": "string" },
+          "gates": { "type": "object" },
+          "result": { "type": "object" }
+        }
+      }
+    },
+    "verdict": {
+      "type": "string",
+      "description": "Final behavioral verdict according to taxonomy"
+    },
+    "limitations": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "signature": {
+      "type": "object",
+      "required": ["alg", "public_key_fingerprint", "sig"],
+      "properties": {
+        "alg": { "type": "string", "enum": ["Ed25519"] },
+        "public_key_fingerprint": { "type": "string" },
+        "sig": { "type": "string" }
+      }
+    }
+  }
+}
