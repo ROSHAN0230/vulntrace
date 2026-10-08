@@ -25,7 +25,7 @@ interface StepRequirementsProps {
 const TEMPLATES = [
   {
     title: 'Surgical Deserialization Patch (Spec §4.9)',
-    text: 'Surgically patch arbitrary YAML deserialization in parse_config, preserve existing regression tests, diff budget <= 30 lines'
+    text: 'Surgically patch arbitrary YAML deserialization in parse_app_config, preserve custom loader class extensions and regression tests, diff budget <= 30 lines'
   },
   {
     title: 'CVE-2020-14343 SafeLoader Hardening',
@@ -52,7 +52,7 @@ export const StepRequirements: React.FC<StepRequirementsProps> = ({
   onProceedToPlan
 }) => {
   const [inputText, setInputText] = useState(
-    currentRequirement || 'Surgically patch arbitrary YAML deserialization in parse_config, preserve existing regression tests, diff budget <= 30 lines'
+    currentRequirement || 'Surgically patch arbitrary YAML deserialization in parse_app_config, preserve custom loader class extensions and regression tests, diff budget <= 30 lines'
   );
 
   const handleSubmit = (e: React.FormEvent) => {

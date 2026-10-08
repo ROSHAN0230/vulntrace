@@ -120,6 +120,18 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 BENCHMARK_SCENARIOS = [
     BenchmarkScenarioInfo(
+        id="contextual_reasoning",
+        name="Contextual Reasoning & SafeLoader Hardening",
+        description="Preserves custom !env_var constructors and surrounding application tags while surgically eliminating unsafe deserialization via AppSafeLoader.",
+        cve_id="CVE-2020-14343",
+        repo_path=str(REPO_ROOT / "benchmarks" / "contextual_reasoning"),
+        target_file="service/custom_loader.py",
+        target_function="parse_app_config",
+        expected_reachability="REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED",
+        expected_behavioral_verdict="GREEN_STATE_VERIFIED",
+        highlight="Demonstrates Nemotron 3 Ultra synthesis of custom AppSafeLoader preserving all 3 regression tests and verifying GREEN 3/3."
+    ),
+    BenchmarkScenarioInfo(
         id="deep_callchain",
         name="Deep Call Chain (Multi-Directory)",
         description="3-tier call hierarchy across api/ -> controllers/ -> services/ with dead legacy utility. Verifies multi-hop reachability, sandbox reproduction, and patch regression testing.",
@@ -802,9 +814,12 @@ async def execute_run(run_id: str):
             current_db.add_event(run_id, "INFO", "PIPELINE", str(ev))
 
 
+    target_file = approved_plan.files_to_touch[0] if (approved_plan and approved_plan.files_to_touch) else None
+
     pipeline_req = VerificationPipelineRequest(
         repo_path=repo_dir,
         cve_id=cve_id,
+        target_file=target_file,
         use_nemotron=True
     )
 

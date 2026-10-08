@@ -78,9 +78,9 @@ CLI verification of the exported Schema v1 bundle generated during the browser w
 ```bash
 $ python -m vulntrace.cli verify-bundle docs/evidence/sample_m6_bundle.json
 [OK] Evidence Bundle verified successfully!
-  Run ID:              run_d77a9d91b79f
-  Verdict:             UNEXPECTED_FAILURE
+  Run ID:              run_5f7e05adf654
+  Verdict:             GREEN_STATE_VERIFIED
   Algorithm:           Ed25519
   Signer Fingerprint:  fe9efb08b8882c91e7946d56bf0ab2ba7ac3e998d015470ccebb8fe5bcca7ce3
-  Canonical SHA-256:   cb9394f2e396c95636fc0061d170004107e0013c2f4f7460f5c03157b23af409
+  Canonical SHA-256:   094ddb468af8e311b1e8391bcf6a2e7af231dc3ff0b0501b6c49dc4adcf1ef40
 ```

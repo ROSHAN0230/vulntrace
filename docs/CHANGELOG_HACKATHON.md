@@ -4,13 +4,21 @@ All major project updates and milestones completed during the Nebius × NVIDIA G
 
 ## [M6] VulnTrace Studio UI Flow — 2026-10-08
 - **Seven-Step Guided Remediation Application (Spec §4.13):** Built and verified the complete frontend application in React 18, TypeScript, and TailwindCSS across 7 sequential stages:
-  1. *Source (`StepSource.tsx`):* Curated benchmark selection (4 multi-file scenarios), public GitHub HTTPS cloning, and safe Zip archive uploads with comprehensive ingest security notices.
+  1. *Source (`StepSource.tsx`):* Curated benchmark selection (5 multi-file scenarios, including flagship Contextual Reasoning & SafeLoader Hardening for CVE-2020-14343), public GitHub HTTPS cloning, and safe Zip archive uploads with comprehensive ingest security notices.
   2. *Analysis (`StepAnalysis.tsx`):* Discovered vulnerable call site table (location, caller, sink, reachable status), AST call-graph reachability traversal hierarchies, baseline test suite results, Tavily CVE intelligence links, and static blind spots.
   3. *Requirements (`StepRequirements.tsx`):* Natural language repair intent capture, syntactic invariant parsing, parsed spec previews, and explicit `UNVERIFIABLE` warning card on vague/unconstrained prompts.
   4. *Plan (`StepPlan.tsx`):* Interactive scope-guard budgeting (approved files to touch, remediation strategy, diff budget slider $\le 30$ lines, and operator approvals).
   5. *Live Run (`StepLiveRun.tsx`):* Real-time SSE streaming terminal over `/runs/{id}/events` displaying 7-stage progress, 3x flake checks (RED 3/3, GREEN 3/3), token ledger telemetry, and fixed-height scrollable terminal with zero layout shifts.
   6. *Evidence (`StepEvidence.tsx`):* Primary trust surface showcasing canonical verdicts (Spec §3.1), side-by-side RED vs. GREEN execution results, syntax-highlighted unified diffs, baseline vs. after regression deltas, Tavily sources, and recorded limitations.
   7. *Export (`StepExport.tsx`):* 1-click `.diff`, `.zip`, and `bundle.json` artifact downloads, copyable `git apply` and `vulntrace verify-bundle` commands, and RFC 8032 Ed25519 public key fingerprint seals.
+- **Flagship End-to-End Verified Run (`run_5f7e05adf654`):** Real browser-driven workflow through all 7 stages on `contextual_reasoning`:
+  - RED state reproduced: 3/3 repeats confirmed (exit 0)
+  - Surgical patch synthesized via NVIDIA Nemotron 3 Ultra (`AppSafeLoader` substitution)
+  - Scope Guard enforced: 1 file (`service/custom_loader.py`), diff budget $\le 30$ lines
+  - GREEN state verified: 3/3 repeats confirmed (exit 42, `GREEN_SECURITY_BLOCK_VERIFIED`)
+  - Regression suite: 3/3 tests passed (0 regressions)
+  - Final behavioral verdict: `GREEN_STATE_VERIFIED`
+  - Signed bundle: Ed25519 verified with CLI `[OK]` (Fingerprint: `fe9efb08...`)
 - **Persistent Header & Design System (`Header.tsx`, `index.html`):** Dark/light mode theme switching with localStorage persistence, persistent Run ID with 1-click clipboard copy, canonical verdict badge, sandbox tier badge (`TIER 1 (CONTAINER)`), live token ledger, and provider status chips (Nemotron: ONLINE, Tavily: ONLINE).
 - **Backend Endpoints & AST Expansion (`vulntrace/server/app.py`):** Added `POST /runs/{id}/analyze` for on-demand AST call-graph traversal and threat intelligence aggregation; enriched `POST /runs/{id}/intent` with `parse_and_validate_intent` evaluating requirements for concrete verifiable targets vs. vague inputs (`is_verifiable: false` with explicit `UNVERIFIABLE` warning and reasons per Spec §3.1, §4.9).
 - **Lighthouse Accessibility Gate (Spec §6 AC):** Exceeded accessibility gate with a verified **95/100 Accessibility score**, 100/100 Best Practices, 100/100 Agentic Browsing, and 0 console errors on the primary Step 6 Evidence page.
@@ -22,7 +30,7 @@ All major project updates and milestones completed during the Nebius × NVIDIA G
 - **Quality Gates & Evidence:**
   - 5 tests in `test_studio_server.py` passed (100% green).
   - 36 tests in `test_evidence_signing.py`, `test_ingest_guards.py`, and `test_tier1_isolation.py` passed (100% green).
-  - Full non-container regression suite: 174 passed, 38 deselected in 5m 19s (100% green).
+  - Full non-container regression suite: 174 passed, 38 deselected in 5m 14s (100% green).
   - Ruff linter: 100% clean (0 errors).
   - Verified bundle: `vulntrace verify-bundle docs/evidence/sample_m6_bundle.json` -> `[OK]`.
 
