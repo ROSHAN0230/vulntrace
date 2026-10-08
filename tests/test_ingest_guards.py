@@ -208,3 +208,71 @@ def test_git_clone_guard_enforces_security_flags(tmp_path: Path):
         # Check ambient credential scrubbing
         assert env["GIT_TERMINAL_PROMPT"] == "0"
         assert env["GIT_ASKPASS"] == "echo"
+
+
+def test_git_clone_with_actual_repo_checkout_hook_disabled(tmp_path: Path, monkeypatch):
+    """
+    Empirically proves that an actual repository clone succeeds with hooks disabled
+    and that a checkout hook in the template/environment does not execute.
+    """
+    import subprocess
+    import os
+
+    # 1. Create a template directory with a post-checkout hook writing a canary file
+    template_dir = tmp_path / "git_template"
+    hooks_dir = template_dir / "hooks"
+    hooks_dir.mkdir(parents=True)
+    canary_file = tmp_path / "HOOK_CANARY_FIRED.txt"
+
+    # Unix shell hook
+    hook_sh = hooks_dir / "post-checkout"
+    hook_sh.write_text(f'#!/bin/sh\necho "HOOK_RAN" > "{canary_file.as_posix()}"\n', encoding="utf-8")
+    try:
+        hook_sh.chmod(0o755)
+    except Exception:
+        pass
+
+    # Windows batch hook
+    hook_bat = hooks_dir / "post-checkout.bat"
+    hook_bat.write_text(f'@echo off\necho HOOK_RAN > "{canary_file}"\n', encoding="utf-8")
+
+    # 2. Create an actual source repository with a commit
+    src_repo = tmp_path / "src_repo"
+    src_repo.mkdir()
+    subprocess.run(["git", "init"], cwd=str(src_repo), check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Tester"], cwd=str(src_repo), check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(src_repo), check=True, capture_output=True)
+    (src_repo / "main.py").write_text("print('safe')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=str(src_repo), check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(src_repo), check=True, capture_output=True)
+
+    # 3. Positive control: standard git clone triggers the hook when template has it
+    dest_standard = tmp_path / "dest_standard"
+    env_insecure = os.environ.copy()
+    env_insecure["GIT_TEMPLATE_DIR"] = str(template_dir)
+    subprocess.run(
+        ["git", "clone", str(src_repo), str(dest_standard)],
+        env=env_insecure,
+        check=True,
+        capture_output=True
+    )
+    assert canary_file.exists(), "Positive control failed: standard git clone should have executed post-checkout hook."
+    canary_file.unlink()
+
+    # 4. Ingest guard execution: GitCloneGuard clones with core.hooksPath disabled
+    monkeypatch.setattr(GitCloneGuard, "ALLOWED_SCHEMES", ("https", "file"))
+    dest_guarded = tmp_path / "dest_guarded"
+    monkeypatch.setenv("GIT_TEMPLATE_DIR", str(template_dir))
+
+    cloned_path = GitCloneGuard.clone_public_repo(
+        repo_url=src_repo.as_uri(),
+        destination_dir=dest_guarded,
+        depth=1
+    )
+
+    # Verify clone succeeded and repo files exist
+    assert cloned_path.exists()
+    assert (cloned_path / "main.py").read_text(encoding="utf-8") == "print('safe')\n"
+
+    # Verify the checkout hook DID NOT execute
+    assert not canary_file.exists(), "Security failure: GitCloneGuard failed to disable post-checkout hook."

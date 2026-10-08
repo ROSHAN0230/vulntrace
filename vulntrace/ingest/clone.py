@@ -44,7 +44,7 @@ class GitCloneGuard:
                 "Repository URL must not contain embedded user credentials or access tokens."
             )
 
-        if not parsed.netloc:
+        if parsed.scheme.lower() == "https" and not parsed.netloc:
             raise CloneSecurityError("Repository URL is missing valid host name.")
 
         return parsed
