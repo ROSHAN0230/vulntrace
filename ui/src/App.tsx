@@ -1,329 +1,570 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Header } from './components/Header';
-import { RepoSelector } from './components/RepoSelector';
-import { CveInspector } from './components/CveInspector';
-import { AstGraphView } from './components/AstGraphView';
-import { VerificationWorkbench } from './components/VerificationWorkbench';
-import { ExecutionTerminal } from './components/ExecutionTerminal';
+import { StepperNav, StepNumber } from './components/StepperNav';
+import { StepSource } from './components/StepSource';
+import { StepAnalysis } from './components/StepAnalysis';
+import { StepRequirements } from './components/StepRequirements';
+import { StepPlan } from './components/StepPlan';
+import { StepLiveRun } from './components/StepLiveRun';
+import { StepEvidence } from './components/StepEvidence';
+import { StepExport } from './components/StepExport';
 import {
   SystemHealthResponse,
-  RepoInspectResponse,
-  CveQueryResponse,
-  AstAnalyzeResponse,
-  VerificationPipelineResponse,
   BenchmarkScenarioInfo,
-  LogLine
+  StudioRun,
+  StudioAnalysis,
+  ParsedSpec,
+  RepairPlan,
+  StudioEvent,
+  TokenLedgerSummary,
+  EvidenceBundle
 } from './types';
 
 export const App: React.FC = () => {
+  // Theme state
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+
+  // Workflow Navigation
+  const [currentStep, setCurrentStep] = useState<StepNumber>(1);
+  const [completedSteps, setCompletedSteps] = useState<Set<StepNumber>>(new Set());
+
+  // Backend Health & Benchmarks
   const [health, setHealth] = useState<SystemHealthResponse | null>(null);
   const [healthLoading, setHealthLoading] = useState<boolean>(true);
-
   const [benchmarks, setBenchmarks] = useState<BenchmarkScenarioInfo[]>([]);
-  const [activeScenario, setActiveScenario] = useState<BenchmarkScenarioInfo | null>(null);
 
-  const [repoData, setRepoData] = useState<RepoInspectResponse | null>(null);
-  const [repoLoading, setRepoLoading] = useState<boolean>(false);
-  const [repoError, setRepoError] = useState<string | undefined>();
+  // Step 1: Run & Workspace State
+  const [currentRun, setCurrentRun] = useState<StudioRun | null>(null);
+  const [sourceLoading, setSourceLoading] = useState<boolean>(false);
+  const [sourceError, setSourceError] = useState<string | undefined>();
 
-  const [cveData, setCveData] = useState<CveQueryResponse | null>(null);
-  const [cveLoading, setCveLoading] = useState<boolean>(false);
-  const [cveError, setCveError] = useState<string | undefined>();
+  // Step 2: Analysis State
+  const [analysis, setAnalysis] = useState<StudioAnalysis | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState<boolean>(false);
+  const [analysisError, setAnalysisError] = useState<string | undefined>();
 
-  const [astData, setAstData] = useState<AstAnalyzeResponse | null>(null);
-  const [astLoading, setAstLoading] = useState<boolean>(false);
-  const [astError, setAstError] = useState<string | undefined>();
+  // Step 3: Requirements State
+  const [requirementText, setRequirementText] = useState<string>(
+    'Surgically patch arbitrary YAML deserialization in parse_config, preserve existing regression tests, diff budget <= 30 lines'
+  );
+  const [parsedSpec, setParsedSpec] = useState<ParsedSpec | null>(null);
+  const [isVerifiable, setIsVerifiable] = useState<boolean>(true);
+  const [intentWarning, setIntentWarning] = useState<string | undefined>();
+  const [intentLoading, setIntentLoading] = useState<boolean>(false);
+  const [intentError, setIntentError] = useState<string | undefined>();
 
-  const [verificationData, setVerificationData] = useState<VerificationPipelineResponse | null>(null);
-  const [verificationLoading, setVerificationLoading] = useState<boolean>(false);
-  const [verificationError, setVerificationError] = useState<string | undefined>();
+  // Step 4: Plan State
+  const [currentPlan, setCurrentPlan] = useState<RepairPlan | null>(null);
+  const [planLoading, setPlanLoading] = useState<boolean>(false);
+  const [planError, setPlanError] = useState<string | undefined>();
 
-  const [logs, setLogs] = useState<LogLine[]>([]);
+  // Step 5: Live Execution & SSE State
+  const [isExecuting, setIsExecuting] = useState<boolean>(false);
+  const [events, setEvents] = useState<StudioEvent[]>([]);
+  const [currentStage, setCurrentStage] = useState<string>('INITIALIZED');
+  const [executionError, setExecutionError] = useState<string | undefined>();
+  const [tokenLedger, setTokenLedger] = useState<TokenLedgerSummary | undefined>();
+  const sseRef = useRef<EventSource | null>(null);
 
-  const addLog = (stage: LogLine['stage'], message: string, level: LogLine['level'] = 'info') => {
-    const now = new Date();
-    const timeStr = now.toTimeString().split(' ')[0] + '.' + String(now.getMilliseconds()).padStart(3, '0');
-    setLogs((prev) => [
-      ...prev,
-      {
-        id: Math.random().toString(36).substring(2, 9),
-        timestamp: timeStr,
-        stage,
-        message,
-        level
-      }
-    ]);
+  // Step 6 & 7: Evidence & Export State
+  const [evidenceBundle, setEvidenceBundle] = useState<EvidenceBundle | null>(null);
+  const [evidenceLoading, setEvidenceLoading] = useState<boolean>(false);
+  const [evidenceError, setEvidenceError] = useState<string | undefined>();
+
+  // 1. Theme Management
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('vulntrace_theme') as 'dark' | 'light' | null;
+    const initialTheme = savedTheme || 'dark';
+    setTheme(initialTheme);
+    if (initialTheme === 'dark') {
+      document.documentElement.classList.add('dark');
+      document.documentElement.classList.remove('light');
+    } else {
+      document.documentElement.classList.add('light');
+      document.documentElement.classList.remove('dark');
+    }
+  }, []);
+
+  const handleToggleTheme = () => {
+    const nextTheme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(nextTheme);
+    localStorage.setItem('vulntrace_theme', nextTheme);
+    if (nextTheme === 'dark') {
+      document.documentElement.classList.add('dark');
+      document.documentElement.classList.remove('light');
+    } else {
+      document.documentElement.classList.add('light');
+      document.documentElement.classList.remove('dark');
+    }
   };
 
-  // 1. Fetch system health and benchmark scenarios on mount
+  // 2. Fetch System Health & Benchmarks on Mount
   useEffect(() => {
-    const initApp = async () => {
+    const fetchInit = async () => {
       setHealthLoading(true);
-      addLog('SYSTEM', 'Connecting to VulnTrace API (/api/v1/health & /api/v1/benchmarks)...', 'info');
       try {
-        const [healthRes, benchRes] = await Promise.all([
+        const [hRes, bRes] = await Promise.all([
           fetch('/api/v1/health'),
           fetch('/api/v1/benchmarks')
         ]);
-
-        if (healthRes.ok) {
-          const hData: SystemHealthResponse = await healthRes.json();
+        if (hRes.ok) {
+          const hData: SystemHealthResponse = await hRes.json();
           setHealth(hData);
-          addLog('SYSTEM', `Health check passed. ${Object.keys(hData.providers).length} providers probed.`, 'success');
         }
-
-        if (benchRes.ok) {
-          const bData: BenchmarkScenarioInfo[] = await benchRes.json();
+        if (bRes.ok) {
+          const bData: BenchmarkScenarioInfo[] = await bRes.json();
           setBenchmarks(bData);
-          if (bData.length > 0) {
-            setActiveScenario(bData[0]);
-            addLog('SYSTEM', `Loaded ${bData.length} Phase 3 benchmark scenarios. Default: ${bData[0].name}`, 'info');
-            // Auto inspect default
-            handleInspectRepo(bData[0].repo_path);
-          }
         }
       } catch (err: any) {
-        addLog('SYSTEM', `Initialization error: ${err.message}`, 'error');
+        console.error('Initial health/benchmark fetch error:', err);
       } finally {
         setHealthLoading(false);
       }
     };
-    initApp();
+    fetchInit();
   }, []);
 
-  // 2. Action: Inspect Repository
-  const handleInspectRepo = async (path: string) => {
-    setRepoLoading(true);
-    setRepoError(undefined);
-    addLog('REPO', `Inspecting repository manifests at: ${path}`, 'info');
-
-    try {
-      const resp = await fetch('/api/v1/repo/inspect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo_path: path })
-      });
-
-      if (!resp.ok) {
-        const errJson = await resp.json().catch(() => ({}));
-        throw new Error(errJson.detail || `HTTP ${resp.status}: ${resp.statusText}`);
-      }
-
-      const data: RepoInspectResponse = await resp.json();
-      setRepoData(data);
-      addLog('REPO', `Inspection complete: ${data.python_files_count} modules, ${data.dependencies.length} packages found.`, 'success');
-    } catch (err: any) {
-      setRepoError(err.message);
-      addLog('REPO', `Inspection error: ${err.message}`, 'error');
-    } finally {
-      setRepoLoading(false);
-    }
+  // Mark step complete helper
+  const markStepComplete = (step: StepNumber) => {
+    setCompletedSteps((prev) => new Set([...prev, step]));
   };
 
-  // 3. Action: Query CVE Threat Intelligence
-  const handleQueryCve = async (cveId: string) => {
-    setCveLoading(true);
-    setCveError(undefined);
-    addLog('INTEL', `Fetching live OSV advisory and Tavily PoCs for: ${cveId}`, 'info');
+  // ---------------------------------------------------------------------------
+  // Step 1 Actions: Intake & Disposable Workspace Provisioning
+  // ---------------------------------------------------------------------------
 
+  const handleSelectBenchmark = async (scenario: BenchmarkScenarioInfo) => {
+    setSourceLoading(true);
+    setSourceError(undefined);
     try {
-      const resp = await fetch('/api/v1/intel/cve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cve_id: cveId, query_tavily: true })
-      });
-
-      if (!resp.ok) {
-        const errJson = await resp.json().catch(() => ({}));
-        throw new Error(errJson.detail || `HTTP ${resp.status}: ${resp.statusText}`);
-      }
-
-      const data: CveQueryResponse = await resp.json();
-      setCveData(data);
-      if (data.found) {
-        addLog('INTEL', `Advisory retrieved (${data.latency_ms}ms). Found ${data.affected_packages.length} affected ranges, ${data.pocs.length} Tavily PoCs.`, 'success');
-      } else {
-        addLog('INTEL', `CVE not found in database: ${data.cve_id}`, 'warn');
-      }
-    } catch (err: any) {
-      setCveError(err.message);
-      addLog('INTEL', `Intelligence retrieval failed: ${err.message}`, 'error');
-    } finally {
-      setCveLoading(false);
-    }
-  };
-
-  // 4. Action: Run AST Call-Graph Reachability Solver
-  const handleRunAst = async () => {
-    const targetPath = repoData?.repo_path || activeScenario?.repo_path;
-    if (!targetPath) {
-      setAstError('Please inspect a valid target repository first.');
-      return;
-    }
-
-    setAstLoading(true);
-    setAstError(undefined);
-    addLog('AST', `Parsing AST call-graph across: ${targetPath}...`, 'info');
-
-    try {
-      const resp = await fetch('/api/v1/ast/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo_path: targetPath })
-      });
-
-      if (!resp.ok) {
-        const errJson = await resp.json().catch(() => ({}));
-        throw new Error(errJson.detail || `HTTP ${resp.status}: ${resp.statusText}`);
-      }
-
-      const data: AstAnalyzeResponse = await resp.json();
-      setAstData(data);
-
-      if (data.verdict === 'REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED' || data.verdict === 'REACHABLE_CALL_PATH_IDENTIFIED') {
-        addLog('AST', `REACHABLE CALL PATH: ${data.reachable_vulnerabilities_count} active call path(s) identified. Controlled behavioral verification required.`, 'warn');
-      } else if (data.verdict === 'UNREACHABLE_FALSE_POSITIVE') {
-        addLog('AST', `FALSE POSITIVE CONFIRMED: Vulnerability isolated in unreferenced dead code (${data.unreachable_dead_code_count} dead site(s)).`, 'success');
-      } else {
-        addLog('AST', `Analysis finished (${data.latency_ms}ms). No target symbols found.`, 'info');
-      }
-    } catch (err: any) {
-      setAstError(err.message);
-      addLog('AST', `AST solver error: ${err.message}`, 'error');
-    } finally {
-      setAstLoading(false);
-    }
-  };
-
-  // 5. Action: Execute Phase 3 Controlled Defensive Verification Pipeline
-  const handleRunVerification = async () => {
-    const targetRepo = repoData?.repo_path || activeScenario?.repo_path;
-    if (!targetRepo) {
-      setVerificationError('Please inspect a target repository first.');
-      return;
-    }
-
-    // Determine target file and function dynamically from active scenario or AST findings
-    let targetFile = activeScenario?.target_file || 'service.py';
-    let targetFunction = activeScenario?.target_function || 'load_user_config';
-
-    if (astData && astData.discovered_calls.length > 0) {
-      const firstCall = astData.discovered_calls.find(c => c.reachable) || astData.discovered_calls[0];
-      targetFile = firstCall.file;
-      targetFunction = firstCall.function_name;
-    }
-
-    setVerificationLoading(true);
-    setVerificationError(undefined);
-
-    const jobId = 'job_' + Math.random().toString(36).substring(2, 10);
-    addLog('SYSTEM', `Initiating verification pipeline session [${jobId}] on ${targetFile}:${targetFunction}()...`, 'info');
-
-    // Subscribe to SSE events
-    const eventSource = new EventSource(`/api/v1/pipeline/stream/${jobId}`);
-    eventSource.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.stage && payload.message) {
-          addLog(payload.stage as any, payload.message, payload.event_type === 'ERROR' ? 'error' : 'info');
-        }
-      } catch (e) {
-        // Heartbeat or raw message
-      }
-    };
-
-    try {
-      const resp = await fetch(`/api/v1/pipeline/run?job_id=${jobId}`, {
+      const res = await fetch('/runs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          repo_path: targetRepo,
-          cve_id: cveData?.cve_id || activeScenario?.cve_id || 'CVE-2020-14343',
-          target_file: targetFile,
-          target_function: targetFunction,
-          vulnerable_symbol: 'yaml.load',
-          use_nemotron: true
+          source_type: 'local',
+          source_ref: scenario.repo_path,
+          cve_id: scenario.cve_id,
+          target_file: scenario.target_file,
+          target_function: scenario.target_function
         })
       });
-
-      if (!resp.ok) {
-        const errJson = await resp.json().catch(() => ({}));
-        throw new Error(errJson.detail || `HTTP ${resp.status}: ${resp.statusText}`);
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || `HTTP ${res.status}: Failed to provision workspace`);
       }
-
-      const data: VerificationPipelineResponse = await resp.json();
-      setVerificationData(data);
-      addLog('VERIFICATION', `Defensive verification complete: ${data.final_behavioral_verdict} (${data.total_pipeline_ms}ms)`, 'success');
+      const runData: StudioRun = await res.json();
+      setCurrentRun(runData);
+      markStepComplete(1);
     } catch (err: any) {
-      setVerificationError(err.message);
-      addLog('ERROR', `Verification pipeline failed: ${err.message}`, 'error');
+      setSourceError(err.message);
     } finally {
-      eventSource.close();
-      setVerificationLoading(false);
+      setSourceLoading(false);
     }
   };
 
-  const handleSelectScenario = (sc: BenchmarkScenarioInfo) => {
-    setActiveScenario(sc);
-    setAstData(null);
-    setVerificationData(null);
-    addLog('SYSTEM', `Switched active benchmark scenario to: ${sc.name}`, 'info');
+  const handleSubmitGithubUrl = async (url: string, cveId: string) => {
+    setSourceLoading(true);
+    setSourceError(undefined);
+    try {
+      const res = await fetch('/runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_type: 'github',
+          source_ref: url,
+          cve_id: cveId
+        })
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || `HTTP ${res.status}: Failed to clone repository`);
+      }
+      const runData: StudioRun = await res.json();
+      setCurrentRun(runData);
+      markStepComplete(1);
+    } catch (err: any) {
+      setSourceError(err.message);
+    } finally {
+      setSourceLoading(false);
+    }
+  };
+
+  const handleSubmitZipUpload = async (file: File, cveId: string) => {
+    setSourceLoading(true);
+    setSourceError(undefined);
+    try {
+      // Ingest validation
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_type: 'upload',
+          source_ref: file.name,
+          cve_id: cveId
+        })
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || `HTTP ${res.status}: Zip upload rejected`);
+      }
+      const runData: StudioRun = await res.json();
+      setCurrentRun(runData);
+      markStepComplete(1);
+    } catch (err: any) {
+      setSourceError(err.message);
+    } finally {
+      setSourceLoading(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Step 2 Actions: Analysis & Reachability
+  // ---------------------------------------------------------------------------
+
+  const handleRunAnalysis = async () => {
+    if (!currentRun) {
+      setAnalysisError('Please provision a workspace in Step 1 first.');
+      return;
+    }
+    setAnalysisLoading(true);
+    setAnalysisError(undefined);
+    try {
+      const res = await fetch(`/runs/${currentRun.id || (currentRun as any).run_id}/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || `HTTP ${res.status}: Static analysis failed`);
+      }
+      const analysisData: StudioAnalysis = await res.json();
+      setAnalysis(analysisData);
+      markStepComplete(2);
+    } catch (err: any) {
+      setAnalysisError(err.message);
+    } finally {
+      setAnalysisLoading(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Step 3 Actions: Requirements & Verifiability
+  // ---------------------------------------------------------------------------
+
+  const handleSubmitRequirement = async (promptText: string) => {
+    const runId = currentRun?.id || (currentRun as any)?.run_id;
+    if (!runId) {
+      setIntentError('No active run initialized.');
+      return;
+    }
+    setRequirementText(promptText);
+    setIntentLoading(true);
+    setIntentError(undefined);
+    try {
+      const res = await fetch(`/runs/${runId}/intent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requirement: promptText,
+          target_file: analysis?.findings?.[0]?.file || 'app.py'
+        })
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || `HTTP ${res.status}: Intent recording failed`);
+      }
+      const data = await res.json();
+      setIsVerifiable(data.is_verifiable);
+      setIntentWarning(data.warning || undefined);
+      setParsedSpec(data.parsed_spec || null);
+
+      if (data.is_verifiable) {
+        markStepComplete(3);
+      }
+    } catch (err: any) {
+      setIntentError(err.message);
+    } finally {
+      setIntentLoading(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Step 4 Actions: Remediation Plan & Scope Guard
+  // ---------------------------------------------------------------------------
+
+  const handleApprovePlan = async (planConfig: {
+    files_to_touch: string[];
+    strategy: string;
+    diff_budget_lines: number;
+    max_files: number;
+  }) => {
+    const runId = currentRun?.id || (currentRun as any)?.run_id;
+    if (!runId) {
+      setPlanError('No active run initialized.');
+      return;
+    }
+    setPlanLoading(true);
+    setPlanError(undefined);
+    try {
+      const res = await fetch(`/runs/${runId}/approve-plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(planConfig)
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || `HTTP ${res.status}: Plan approval rejected`);
+      }
+      const data = await res.json();
+      setCurrentPlan(data.plan);
+      markStepComplete(4);
+    } catch (err: any) {
+      setPlanError(err.message);
+    } finally {
+      setPlanLoading(false);
+    }
+  };
+
+  const handleCancelPlan = () => {
+    setCurrentPlan(null);
+  };
+
+  // ---------------------------------------------------------------------------
+  // Step 5 Actions: Live Execution & Real SSE Event Stream
+  // ---------------------------------------------------------------------------
+
+  const handleExecute = async () => {
+    const runId = currentRun?.id || (currentRun as any)?.run_id;
+    if (!runId) {
+      setExecutionError('No active run initialized.');
+      return;
+    }
+
+    setIsExecuting(true);
+    setExecutionError(undefined);
+    setEvents([]);
+
+    // Open live SSE stream from /runs/{id}/events
+    if (sseRef.current) {
+      sseRef.current.close();
+    }
+
+    const sse = new EventSource(`/runs/${runId}/events`);
+    sseRef.current = sse;
+
+    sse.onmessage = (event) => {
+      try {
+        const evData: StudioEvent = JSON.parse(event.data);
+        setEvents((prev) => [...prev, evData]);
+        if (evData.stage) {
+          setCurrentStage(evData.stage);
+        }
+      } catch (e) {
+        console.warn('SSE payload parsing warning:', e);
+      }
+    };
+
+    sse.onerror = () => {
+      // Stream closed or error
+    };
+
+    try {
+      const res = await fetch(`/runs/${runId}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || `HTTP ${res.status}: Pipeline execution error`);
+      }
+
+      const execData = await res.json();
+
+      // Update run with terminal verdict
+      setCurrentRun((prev) => (prev ? { ...prev, verdict: execData.verdict } : null));
+
+      // Fetch freshly signed evidence bundle
+      setEvidenceLoading(true);
+      setEvidenceError(undefined);
+      try {
+        const bundleRes = await fetch(`/runs/${runId}/bundle`);
+        if (bundleRes.ok) {
+          const bundleJson: EvidenceBundle = await bundleRes.json();
+          setEvidenceBundle(bundleJson);
+
+          // Compute Token Ledger summary
+          const calls = bundleJson.llm?.calls || [];
+          const promptTokens = calls.reduce((acc, c) => acc + (c.prompt_tokens || 0), 0);
+          const completionTokens = calls.reduce((acc, c) => acc + (c.completion_tokens || 0), 0);
+          const reasoningTokens = calls.reduce((acc, c) => acc + (c.reasoning_tokens || 0), 0);
+          const totalTokens = promptTokens + completionTokens;
+          const latencyMs = calls.reduce((acc, c) => acc + (c.latency_ms || 0), 0);
+
+          setTokenLedger({
+            prompt_tokens: promptTokens,
+            completion_tokens: completionTokens,
+            reasoning_tokens: reasoningTokens,
+            total_tokens: totalTokens,
+            cost_usd: 0.0,
+            latency_ms: latencyMs,
+            calls_count: calls.length
+          });
+        } else {
+          const errData = await bundleRes.json().catch(() => ({}));
+          setEvidenceError(errData.detail || 'Evidence bundle not yet available.');
+        }
+      } catch (bErr: any) {
+        setEvidenceError(bErr.message);
+      } finally {
+        setEvidenceLoading(false);
+      }
+
+      markStepComplete(5);
+      markStepComplete(6);
+      markStepComplete(7);
+    } catch (err: any) {
+      setExecutionError(err.message);
+    } finally {
+      setIsExecuting(false);
+      if (sseRef.current) {
+        sseRef.current.close();
+      }
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Step Transition Handlers
+  // ---------------------------------------------------------------------------
+
+  const handleStepTransition = (targetStep: StepNumber) => {
+    setCurrentStep(targetStep);
+    // Auto-trigger analysis when advancing from Step 1 to Step 2 if not yet analyzed
+    if (targetStep === 2 && !analysis && !analysisLoading && currentRun) {
+      handleRunAnalysis();
+    }
   };
 
   return (
-    <div className="min-h-screen bg-canvas text-slate-100 flex flex-col font-sans">
-      <Header health={health} loading={healthLoading} />
+    <div className="min-h-screen bg-canvas dark:bg-[#020617] light:bg-[#f8fafc] text-slate-100 dark:text-slate-100 light:text-slate-900 flex flex-col font-sans transition-colors">
+      {/* 1. Persistent Run Header (Spec §4.13) */}
+      <Header
+        runId={currentRun?.id || (currentRun as any)?.run_id}
+        verdict={currentRun?.verdict || (isExecuting ? 'RUNNING' : 'READY')}
+        sandboxTier={evidenceBundle?.sandbox?.tier || 'TIER 1 (CONTAINER)'}
+        tokenLedger={tokenLedger}
+        health={health}
+        healthLoading={healthLoading}
+        theme={theme}
+        onToggleTheme={handleToggleTheme}
+      />
 
-      <main className="flex-1 p-5 max-w-[1720px] w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-5">
-        {/* Left Column: Repository, Intelligence, and Terminal (5 cols) */}
-        <div className="lg:col-span-5 space-y-5 flex flex-col">
-          <RepoSelector
-            onInspect={handleInspectRepo}
-            data={repoData}
-            loading={repoLoading}
-            error={repoError}
+      {/* 2. Seven-Step Navigation Stepper (Spec §4.13) */}
+      <StepperNav
+        currentStep={currentStep}
+        completedSteps={completedSteps}
+        onSelectStep={handleStepTransition}
+      />
+
+      {/* 3. Main Step Work Area */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 lg:p-8">
+        {currentStep === 1 && (
+          <StepSource
             benchmarks={benchmarks}
-            activeScenario={activeScenario}
-            onSelectScenario={handleSelectScenario}
+            currentRun={currentRun}
+            loading={sourceLoading}
+            error={sourceError}
+            onSelectBenchmark={handleSelectBenchmark}
+            onSubmitGithubUrl={handleSubmitGithubUrl}
+            onSubmitZipUpload={handleSubmitZipUpload}
+            onProceedToAnalysis={() => handleStepTransition(2)}
           />
-          <CveInspector
-            onQuery={handleQueryCve}
-            data={cveData}
-            loading={cveLoading}
-            error={cveError}
-          />
-          <div className="flex-1 min-h-[300px]">
-            <ExecutionTerminal
-              logs={logs}
-              onClear={() => setLogs([])}
-              statusText={
-                verificationLoading
-                  ? 'Executing sandbox verification & Nemotron patch...'
-                  : astLoading || repoLoading || cveLoading
-                  ? 'Executing backend query...'
-                  : undefined
-              }
-            />
-          </div>
-        </div>
+        )}
 
-        {/* Right Column: AST Call-Graph & Behavioral Verification Workbench (7 cols) */}
-        <div className="lg:col-span-7 space-y-5 flex flex-col">
-          <AstGraphView
-            onAnalyze={handleRunAst}
-            data={astData}
-            loading={astLoading}
-            error={astError}
+        {currentStep === 2 && (
+          <StepAnalysis
+            analysis={analysis}
+            loading={analysisLoading}
+            error={analysisError}
+            onRunAnalysis={handleRunAnalysis}
+            onProceedToRequirements={() => handleStepTransition(3)}
           />
-          <VerificationWorkbench
-            onRunPipeline={handleRunVerification}
-            data={verificationData}
-            loading={verificationLoading}
-            error={verificationError}
-            reachabilityReady={Boolean(astData && astData.reachable_vulnerabilities_count > 0)}
+        )}
+
+        {currentStep === 3 && (
+          <StepRequirements
+            currentRequirement={requirementText}
+            parsedSpec={parsedSpec}
+            isVerifiable={isVerifiable}
+            warning={intentWarning}
+            loading={intentLoading}
+            error={intentError}
+            onSubmitRequirement={handleSubmitRequirement}
+            onProceedToPlan={() => handleStepTransition(4)}
           />
-        </div>
+        )}
+
+        {currentStep === 4 && (
+          <StepPlan
+            initialFiles={analysis?.findings?.map((f) => f.file) || ['app.py']}
+            currentPlan={currentPlan}
+            loading={planLoading}
+            error={planError}
+            onApprovePlan={handleApprovePlan}
+            onCancelPlan={handleCancelPlan}
+            onProceedToLiveRun={() => handleStepTransition(5)}
+          />
+        )}
+
+        {currentStep === 5 && (
+          <StepLiveRun
+            runId={currentRun?.id || (currentRun as any)?.run_id}
+            isExecuting={isExecuting}
+            events={events}
+            currentStage={currentStage}
+            verdict={currentRun?.verdict}
+            tokenLedger={tokenLedger}
+            error={executionError}
+            onExecute={handleExecute}
+            onProceedToEvidence={() => handleStepTransition(6)}
+          />
+        )}
+
+        {currentStep === 6 && (
+          <StepEvidence
+            bundle={evidenceBundle}
+            loading={evidenceLoading}
+            error={evidenceError}
+            onProceedToExport={() => handleStepTransition(7)}
+          />
+        )}
+
+        {currentStep === 7 && (
+          <StepExport
+            runId={currentRun?.id || (currentRun as any)?.run_id || 'run_studio'}
+            bundle={evidenceBundle}
+            loading={false}
+          />
+        )}
       </main>
+
+      {/* Persistent Footer */}
+      <footer className="border-t border-border-subtle bg-surface-1 dark:bg-[#070b14] light:bg-white px-6 py-3 text-xs font-mono text-slate-500 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-2">
+          <span>VULNTRACE STUDIO</span>
+          <span>•</span>
+          <span>AUTONOMOUS CVE REPRODUCTION & VERIFIED PATCHING</span>
+        </div>
+        <div className="flex items-center gap-4 text-[11px]">
+          <span>CANONICAL TAXONOMY: SPEC §3.1</span>
+          <span>•</span>
+          <span>RFC 8032 Ed25519 SEALED</span>
+          <span>•</span>
+          <span>ZERO AMBIENT SECRETS</span>
+        </div>
+      </footer>
     </div>
   );
 };

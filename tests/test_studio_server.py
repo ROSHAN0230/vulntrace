@@ -100,13 +100,32 @@ def test_api_create_run_and_plan_flow(tmp_path: Path):
     assert res_get.status_code == 200
     assert res_get.json()["id"] == run_id
 
-    # 3. POST /runs/{run_id}/intent
+    # 3. POST /runs/{run_id}/intent (Verifiable)
     res_intent = client.post(f"/runs/{run_id}/intent", json={
-        "requirement": "Surgically patch CVE-2020-14343 safe loader vulnerability",
+        "requirement": "Surgically patch CVE-2020-14343 safe loader vulnerability in parse_config, preserve regression tests",
         "target_file": "app.py"
     })
     assert res_intent.status_code == 200
     assert res_intent.json()["status"] == "INTENT_RECORDED"
+    assert res_intent.json()["is_verifiable"] is True
+    assert "CVE-2020-14343" in res_intent.json()["parsed_spec"]["must_fix"]
+
+    # 3b. POST /runs/{run_id}/intent (Unverifiable vague prompt)
+    res_vague = client.post(f"/runs/{run_id}/intent", json={
+        "requirement": "make it better"
+    })
+    assert res_vague.status_code == 200
+    assert res_vague.json()["is_verifiable"] is False
+    assert "UNVERIFIABLE" in res_vague.json()["warning"]
+
+    # 3c. POST /runs/{run_id}/analyze
+    res_analyze = client.post(f"/runs/{run_id}/analyze")
+    assert res_analyze.status_code == 200
+    analyze_json = res_analyze.json()
+    assert "findings" in analyze_json
+    assert "reachability" in analyze_json
+    assert "intel" in analyze_json
+    assert len(analyze_json["intel"]["sources"]) >= 1
 
     # 4. POST /runs/{run_id}/approve-plan
     res_plan = client.post(f"/runs/{run_id}/approve-plan", json={
@@ -183,3 +202,51 @@ def test_api_export_diff_and_zip(tmp_path: Path):
     assert res_zip.status_code == 200
     assert res_zip.headers["content-type"] == "application/zip"
     assert len(res_zip.content) > 0
+
+
+def test_api_execute_run_flow(tmp_path: Path):
+    """Proves POST /runs/{id}/execute runs verification pipeline and emits signed evidence."""
+    test_db = StudioDatabase(tmp_path / "exec_test.db")
+    test_workspace = tmp_path / "workspaces"
+    test_workspace.mkdir()
+
+    set_db(test_db)
+    set_workspace_root(test_workspace)
+
+    client = TestClient(app)
+
+    # Ingest benchmark
+    benchmark_dir = Path(__file__).resolve().parent.parent / "benchmarks" / "deep_callchain"
+    res_bench = client.post("/runs", json={
+        "source_type": "local",
+        "source_ref": str(benchmark_dir),
+        "cve_id": "CVE-2020-14343"
+    })
+    assert res_bench.status_code == 200
+    run_id = res_bench.json()["run_id"]
+
+    # Approve plan
+    client.post(f"/runs/{run_id}/approve-plan", json={
+        "files_to_touch": ["services/yaml_parser.py"],
+        "strategy": "surgical_sink_hardening",
+        "diff_budget_lines": 30,
+        "max_files": 3
+    })
+
+    # Execute run
+    res_exec = client.post(f"/runs/{run_id}/execute")
+    assert res_exec.status_code == 200
+    exec_data = res_exec.json()
+    assert exec_data["run_id"] == run_id
+    assert exec_data["status"] in ("COMPLETED", "BLOCKED")
+    assert exec_data["evidence_bundle_signed"] is True
+    assert exec_data["signer_fingerprint"] is not None
+
+    # Verify bundle endpoint returns signed JSON
+    res_bundle = client.get(f"/runs/{run_id}/bundle")
+    assert res_bundle.status_code == 200
+    bundle_data = res_bundle.json()
+    assert bundle_data["signature"]["alg"] == "Ed25519"
+    assert "public_key_fingerprint" in bundle_data["signature"]
+
+

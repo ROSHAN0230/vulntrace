@@ -1,0 +1,34 @@
+--- a/services/yaml_parser.py
++++ b/services/yaml_parser.py
+@@ -1,10 +1,25 @@
+-"""YAML Parser Service"""
+ import yaml
++import os
+ 
+-def parse_custom_config(raw_yaml: str) -> dict:
+-    """Parses arbitrary YAML configuration payload."""
+-    # Vulnerable deserialization sink (CVE-2020-14343)
+-    data = yaml.load(raw_yaml, Loader=yaml.Loader)
++class AppSafeLoader(yaml.SafeLoader):
++    """Secure application loader supporting internal configuration tags."""
++    pass
++
++def _env_tag_constructor(loader, node):
++    val = loader.construct_scalar(node)
++    return os.environ.get(val, f"DEFAULT_{val}")
++
++AppSafeLoader.add_constructor("!env_var", _env_tag_constructor)
++yaml.Loader.add_constructor("!env_var", _env_tag_constructor)
++
++def parse_app_config(raw_yaml: str) -> dict:
++    """
++    Parses application configuration.
++    Must maintain support for !env_var custom tag.
++    Vulnerable sink: currently uses unsafe yaml.load with default Loader.
++    """
++    # Fixed: use AppSafeLoader (extends SafeLoader) to prevent arbitrary code execution
++    data = yaml.load(raw_yaml, Loader=AppSafeLoader)
+     if isinstance(data, dict):
+         return data
+-    return {"parsed": data}
++    return {"config": data}

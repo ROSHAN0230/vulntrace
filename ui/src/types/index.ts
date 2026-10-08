@@ -221,3 +221,200 @@ export interface LogLine {
   message: string;
   level: 'info' | 'warn' | 'error' | 'success';
 }
+
+export type CanonicalVerdict =
+  | 'GREEN_STATE_VERIFIED'
+  | 'NO_STATIC_PATH_FOUND'
+  | 'NOT_VULNERABLE_ALREADY_SAFE'
+  | 'RED_NOT_REPRODUCED'
+  | 'RED_STATE_PERSISTS'
+  | 'PATCH_REJECTED'
+  | 'REGRESSION_FAILURE'
+  | 'VERIFICATION_REJECTED'
+  | 'ENV_BUILD_FAILED'
+  | 'UNVERIFIABLE'
+  | 'UNEXPECTED_FAILURE';
+
+export interface StudioRun {
+  id: string;
+  source_type: 'github' | 'upload' | 'local';
+  source_ref: string;
+  cve_id: string;
+  repo_dir: string;
+  status: 'INITIALIZED' | 'ANALYZING' | 'INTENT_RECORDED' | 'PLAN_APPROVED' | 'RUNNING' | 'COMPLETED' | 'BLOCKED' | 'FAILED';
+  verdict?: CanonicalVerdict | string;
+  plan?: string;
+  bundle?: string;
+  diff?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StudioEvent {
+  id: number;
+  run_id?: string;
+  event_type: string;
+  stage: string;
+  message: string;
+  payload?: Record<string, any>;
+  created_at?: string;
+}
+
+export interface ParsedSpec {
+  must_fix: string;
+  must_preserve: string[];
+  constraints: string[];
+  acceptance_tests: Array<{ name: string; status: string; oracle?: string }>;
+}
+
+export interface RepairPlan {
+  files_to_touch: string[];
+  strategy: string;
+  diff_budget_lines: number;
+  max_files: number;
+  user_approved: boolean;
+}
+
+export interface FindingItem {
+  cve_id: string;
+  file: string;
+  line: number;
+  caller: string;
+  sink: string;
+  reachable: boolean;
+  call_path?: string[];
+  severity: string;
+}
+
+export interface StudioAnalysis {
+  run_id: string;
+  cve_id: string;
+  verdict: string;
+  findings: FindingItem[];
+  reachability: {
+    verdict: string;
+    reachable_paths_count: number;
+    unreachable_dead_code_count: number;
+    calls: VulnerableCallSite[];
+    nodes: CallGraphNode[];
+    edges: CallGraphEdge[];
+    blind_spots: string[];
+  };
+  baseline_tests: {
+    test_count: number;
+    passed: boolean;
+    duration_ms: number;
+  };
+  intel: {
+    summary: string;
+    sources: Array<{ title: string; url: string; source: string }>;
+    affected_packages: string[];
+  };
+}
+
+export interface TokenLedgerSummary {
+  prompt_tokens: number;
+  completion_tokens: number;
+  reasoning_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  latency_ms: number;
+  calls_count: number;
+}
+
+export interface EvidenceBundle {
+  run_id: string;
+  created_at: string;
+  tool_versions: {
+    vulntrace: string;
+    python: string;
+  };
+  python_version: string;
+  source: {
+    type: string;
+    url?: string;
+    upload_sha256?: string;
+    commit?: string;
+  };
+  sandbox: {
+    tier: string;
+    limits: {
+      memory: string;
+      cpus: string;
+      pids_limit: number;
+      timeout_sec: number;
+    };
+    network_policy: string;
+  };
+  intel: {
+    status: string;
+    queries: string[];
+    urls: string[];
+    response_hashes: string[];
+  };
+  analysis: {
+    findings: Array<Record<string, any>>;
+    reachability: {
+      paths: string[];
+      blind_spots: string[];
+    };
+    baseline_tests: {
+      passed: boolean;
+      test_count: number;
+    };
+  };
+  spec: {
+    requirement: string;
+    parsed_spec: Record<string, any>;
+    acceptance_tests: Array<Record<string, any>>;
+  };
+  llm: {
+    calls: Array<{
+      stage: string;
+      model: string;
+      prompt_tokens: number;
+      completion_tokens: number;
+      reasoning_tokens: number;
+      latency_ms: number;
+    }>;
+  };
+  verification: {
+    harness_sha256: string;
+    red_runs: Array<{
+      run_number: number;
+      exit_code: number;
+      reproduced: boolean;
+      duration_ms: number;
+    }>;
+    green_runs: Array<{
+      run_number: number;
+      exit_code: number;
+      verified: boolean;
+      duration_ms: number;
+    }>;
+    positive_control: {
+      attempted: boolean;
+      valid: boolean;
+    };
+    regression: {
+      passed: boolean;
+      test_count: number;
+      new_failures: string[];
+      preexisting_failures: string[];
+    };
+  };
+  attempts: Array<{
+    attempt_number: number;
+    diff: string;
+    gates: Record<string, boolean>;
+    result: string;
+  }>;
+  verdict: CanonicalVerdict;
+  limitations: string[];
+  signature: {
+    alg: string;
+    public_key: string;
+    public_key_fingerprint: string;
+    sig: string;
+  };
+}
