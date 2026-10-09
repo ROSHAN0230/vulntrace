@@ -440,7 +440,7 @@ export const StepEvidence: React.FC<StepEvidenceProps> = ({
             </div>
             <div className="p-2.5 rounded-md bg-surface-inset border border-border-subtle">
               <span className="text-slate-400 text-[11px] font-sans font-medium block">Total Latency:</span>
-              <span className="text-sm font-bold text-sky-300">{totalLatencyMs.toFixed(0)}ms</span>
+              <span className="text-sm font-bold text-sky-300">{totalLatencyMs > 0 ? `${totalLatencyMs.toFixed(0)}ms` : '—'}</span>
             </div>
             <div className="p-2.5 rounded-md bg-surface-inset border border-border-subtle">
               <span className="text-slate-400 text-[11px] font-sans font-medium block">Prompt Tokens:</span>

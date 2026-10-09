@@ -497,21 +497,55 @@ async def create_run(req: CreateRunRequest):
 
 @app.get("/runs/{run_id}")
 async def get_run_details(run_id: str):
-    """Returns run metadata and current status."""
+    """Returns run metadata and current status along with persisted events and llm telemetry."""
     current_db = get_db()
     record = current_db.get_run(run_id)
     if not record:
         raise HTTPException(status_code=404, detail="Run not found.")
-    return record
+    data = dict(record)
+    events = current_db.get_events(run_id)
+    data["events"] = [
+        {
+            "id": ev["id"],
+            "run_id": ev["run_id"],
+            "event_type": ev["event_type"],
+            "stage": ev["stage"],
+            "message": ev["message"],
+            "payload": json.loads(ev["payload"] or "{}") if isinstance(ev["payload"], str) else (ev["payload"] or {}),
+            "created_at": ev["created_at"]
+        }
+        for ev in events
+    ]
+    data["llm_calls"] = current_db.get_llm_calls(run_id)
+    return data
 
 
 @app.get("/runs/{run_id}/events")
-async def stream_run_events(run_id: str):
+async def stream_run_events(run_id: str, request: Request):
     """Server-Sent Events (SSE) stream delivering real-time execution events and token ledger telemetry."""
     current_db = get_db()
     record = current_db.get_run(run_id)
     if not record:
         raise HTTPException(status_code=404, detail="Run not found.")
+
+    accept_header = request.headers.get("accept", "")
+    if "application/json" in accept_header and "text/event-stream" not in accept_header:
+        events = current_db.get_events(run_id)
+        return {
+            "run_id": run_id,
+            "events": [
+                {
+                    "id": ev["id"],
+                    "run_id": ev["run_id"],
+                    "event_type": ev["event_type"],
+                    "stage": ev["stage"],
+                    "message": ev["message"],
+                    "payload": json.loads(ev["payload"] or "{}") if isinstance(ev["payload"], str) else (ev["payload"] or {}),
+                    "created_at": ev["created_at"]
+                }
+                for ev in events
+            ]
+        }
 
     async def event_generator():
         last_seen_id = 0

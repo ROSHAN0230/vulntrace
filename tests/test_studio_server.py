@@ -250,3 +250,50 @@ def test_api_execute_run_flow(tmp_path: Path):
     assert "public_key_fingerprint" in bundle_data["signature"]
 
 
+def test_historical_events_preserves_persisted_timestamps_and_honest_telemetry(tmp_path: Path):
+    """Proves that historical run retrieval preserves real recorded timestamps and honest telemetry without invented numbers."""
+    test_db = StudioDatabase(tmp_path / "telemetry_test.db")
+    set_db(test_db)
+    client = TestClient(app)
+
+    run_id = "run_audit_test_999"
+    test_db.create_run(run_id=run_id, source_type="local", source_ref="/dummy/path", cve_id="CVE-2020-14343")
+
+    # Add events with distinct recorded timestamps
+    ev1 = test_db.add_event(run_id, "STAGE_START", "ENVBUILD", "Building sandbox virtualenv")
+    ev2 = test_db.add_event(run_id, "STAGE_COMPLETE", "ENVBUILD", "Dependencies sealed")
+    ev3 = test_db.add_event(run_id, "STATE_TRANSITION", "VERDICT", "FINAL BEHAVIORAL VERDICT: GREEN_STATE_VERIFIED (Total pipeline: 12824.33ms)")
+
+    # Retrieve run via GET /runs/{id}
+    res_run = client.get(f"/runs/{run_id}")
+    assert res_run.status_code == 200
+    data = res_run.json()
+    assert data["id"] == run_id
+    assert len(data["events"]) == 3
+    # Check that timestamps match persisted records exactly
+    assert data["events"][0]["created_at"] == ev1["created_at"]
+    assert data["events"][1]["created_at"] == ev2["created_at"]
+    assert data["events"][2]["created_at"] == ev3["created_at"]
+
+    # When no LLM calls recorded, llm_calls is empty list (no invented 2840ms or 1420 tokens)
+    assert data["llm_calls"] == []
+
+    # Also check GET /runs/{id}/events with Accept: application/json
+    res_events = client.get(f"/runs/{run_id}/events", headers={"Accept": "application/json"})
+    assert res_events.status_code == 200
+    events_json = res_events.json()
+    assert len(events_json["events"]) == 3
+    assert events_json["events"][0]["created_at"] == ev1["created_at"]
+    assert events_json["events"][1]["created_at"] == ev2["created_at"]
+    assert events_json["events"][2]["created_at"] == ev3["created_at"]
+
+    # Now record real LLM call with 0.0 latency (unavailable network timing)
+    test_db.record_llm_call(run_id, "PATCH", "nvidia/Nemotron-70B", prompt_tokens=5538, completion_tokens=4890, reasoning_tokens=2706, latency_ms=0.0)
+    res_updated = client.get(f"/runs/{run_id}")
+    assert res_updated.status_code == 200
+    updated_data = res_updated.json()
+    assert len(updated_data["llm_calls"]) == 1
+    llm_rec = updated_data["llm_calls"][0]
+    assert llm_rec["prompt_tokens"] == 5538
+    assert llm_rec["completion_tokens"] == 4890
+    assert llm_rec["latency_ms"] == 0.0  # Must be honestly 0.0, never invented

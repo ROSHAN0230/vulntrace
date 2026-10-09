@@ -172,13 +172,15 @@ export const Header: React.FC<HeaderProps> = ({
         {tokenLedger && (
           <div
             className="hidden sm:flex items-center gap-2 px-2.5 py-1 rounded text-xs bg-surface-2 dark:bg-[#0f172a] light:bg-slate-100 border border-border-subtle dark:border-slate-800 text-slate-300"
-            title={`Prompt: ${tokenLedger.prompt_tokens} | Completion: ${tokenLedger.completion_tokens} | Latency: ${tokenLedger.latency_ms.toFixed(1)}ms`}
+            title={`Prompt: ${tokenLedger.prompt_tokens} | Completion: ${tokenLedger.completion_tokens} | Latency: ${tokenLedger.latency_ms > 0 ? `${tokenLedger.latency_ms.toFixed(1)}ms` : 'Unavailable'}`}
           >
             <Cpu className="w-3.5 h-3.5 text-sky-400" aria-hidden="true" />
             <span className="font-sans text-slate-400 text-[11px]">Tokens:</span>
             <strong className="font-mono text-slate-100">{tokenLedger.total_tokens.toLocaleString()}</strong>
             <span className="text-slate-600">|</span>
-            <span className="font-mono text-[11px] text-slate-300">{tokenLedger.latency_ms.toFixed(0)}ms</span>
+            <span className="font-mono text-[11px] text-slate-300">
+              {tokenLedger.latency_ms > 0 ? `${tokenLedger.latency_ms.toFixed(0)}ms` : '—'}
+            </span>
           </div>
         )}
 

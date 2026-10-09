@@ -61,12 +61,28 @@ export const StepLiveRun: React.FC<StepLiveRunProps> = ({
   const isCompleted = verdict && verdict !== 'INITIALIZED' && verdict !== 'RUNNING';
 
   const getStageStatus = (stageId: string) => {
-    const hasStageCompleted = events.some(
-      (e) => (e.stage?.toUpperCase() === stageId || e.event_type === 'STAGE_COMPLETE') && e.stage?.toUpperCase().includes(stageId)
-    );
-    const isStageCurrent = currentStage?.toUpperCase().includes(stageId);
+    const stageAliases: Record<string, string[]> = {
+      ENVBUILD: ['ENVBUILD', 'SETUP'],
+      REPRODUCTION: ['REPRODUCTION'],
+      REMEDIATION: ['REMEDIATION', 'PATCH', 'TRIAGE', 'PLANNING'],
+      SCOPE_GUARD: ['SCOPE_GUARD', 'PLAN_APPROVED', 'POLICY'],
+      VERIFICATION: ['VERIFICATION'],
+      REGRESSION: ['REGRESSION'],
+      EVIDENCE: ['EVIDENCE', 'VERDICT', 'SANDBOX']
+    };
+    const aliases = stageAliases[stageId] || [stageId];
 
-    if (hasStageCompleted) return 'COMPLETED';
+    const hasStageCompleted = events.some((e) => {
+      const eStage = (e.stage || '').toUpperCase();
+      return (
+        aliases.includes(eStage) &&
+        (e.event_type === 'STAGE_COMPLETE' || e.event_type === 'STATE_TRANSITION' || e.event_type === 'LOG')
+      );
+    });
+
+    const isStageCurrent = currentStage && aliases.includes(currentStage.toUpperCase());
+
+    if (hasStageCompleted || (isCompleted && verdict === 'GREEN_STATE_VERIFIED')) return 'COMPLETED';
     if (isStageCurrent && isExecuting) return 'ACTIVE';
     return 'PENDING';
   };
@@ -148,7 +164,7 @@ export const StepLiveRun: React.FC<StepLiveRunProps> = ({
           </div>
           <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 pt-0.5">
             <span>Model: Nemotron-70B (Tier-3)</span>
-            <span>Latency: {tokenLedger ? `${tokenLedger.latency_ms.toFixed(0)}ms` : '0ms'}</span>
+            <span>Latency: {tokenLedger && tokenLedger.latency_ms > 0 ? `${tokenLedger.latency_ms.toFixed(0)}ms` : '—'}</span>
           </div>
         </div>
 
@@ -265,7 +281,13 @@ export const StepLiveRun: React.FC<StepLiveRunProps> = ({
               events.map((ev, i) => (
                 <div key={i} className="flex items-start gap-2.5 text-slate-300 leading-relaxed break-all">
                   <span className="text-slate-400 text-[10px] select-none shrink-0 mt-0.5 font-mono">
-                    {ev.created_at ? new Date(ev.created_at).toISOString().substring(11, 23) : `[00:00.${String(i).padStart(3, '0')}]`}
+                    {ev.created_at
+                      ? new Date(
+                          typeof ev.created_at === 'number'
+                            ? (ev.created_at > 1e11 ? ev.created_at : ev.created_at * 1000)
+                            : ev.created_at
+                        ).toISOString().substring(11, 23)
+                      : `[00:00.${String(i).padStart(3, '0')}]`}
                   </span>
                   <span className={`px-1.5 py-0.2 rounded text-[10px] shrink-0 font-bold font-mono ${
                     ev.event_type === 'ERROR'

@@ -157,55 +157,59 @@ export const App: React.FC = () => {
     }
 
     if (stepParam && parseInt(stepParam, 10) >= 5 && runIdParam) {
-      fetch(`/runs/${runIdParam}/bundle`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((bData) => {
+      Promise.all([
+        fetch(`/runs/${runIdParam}`).then((res) => (res.ok ? res.json() : null)),
+        fetch(`/runs/${runIdParam}/bundle`).then((res) => (res.ok ? res.json() : null))
+      ])
+        .then(([runData, bData]) => {
           if (bData) {
             setEvidenceBundle(bData);
+          }
+          if (runData || bData) {
+            const rawCreated = runData?.created_at || bData?.created_at;
+            const formattedCreated = typeof rawCreated === 'number'
+              ? new Date(rawCreated > 1e11 ? rawCreated : rawCreated * 1000).toISOString()
+              : rawCreated || new Date().toISOString();
+
             setCurrentRun({
-              id: bData.run_id,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-              status: 'COMPLETED',
-              source_type: 'local',
-              source_ref: bData.source?.url || 'benchmark',
-              cve_id: 'CVE-2020-14343',
-              verdict: bData.verdict,
-              repo_dir: ''
+              id: runData?.id || bData?.run_id || runIdParam,
+              created_at: formattedCreated,
+              updated_at: formattedCreated,
+              status: runData?.status || (bData ? 'COMPLETED' : 'INITIALIZED'),
+              source_type: runData?.source_type || 'local',
+              source_ref: runData?.source_ref || bData?.source?.url || 'benchmark',
+              cve_id: runData?.cve_id || 'CVE-2020-14343',
+              verdict: runData?.verdict || bData?.verdict,
+              repo_dir: runData?.repo_dir || ''
             });
 
-            // Populate events if Step 5
-            setEvents([
-              { id: 1, run_id: runIdParam, event_type: 'STAGE_START', stage: 'ENVBUILD', message: 'Provisioning isolated Tier-1 container virtualenv', payload: {}, created_at: new Date().toISOString() },
-              { id: 2, run_id: runIdParam, event_type: 'STAGE_COMPLETE', stage: 'ENVBUILD', message: 'Virtualenv dependencies sealed (Python 3.12, PyYAML)', payload: {}, created_at: new Date().toISOString() },
-              { id: 3, run_id: runIdParam, event_type: 'STAGE_START', stage: 'REPRODUCTION', message: 'Executing RED exploit probe (3/3 repeats)', payload: {}, created_at: new Date().toISOString() },
-              { id: 4, run_id: runIdParam, event_type: 'STAGE_COMPLETE', stage: 'REPRODUCTION', message: 'RED state confirmed: Exit code 0 on all 3/3 repeats (Exploit succeeded)', payload: {}, created_at: new Date().toISOString() },
-              { id: 5, run_id: runIdParam, event_type: 'STAGE_START', stage: 'REMEDIATION', message: 'Nemotron-70B synthesizing surgical AppSafeLoader patch', payload: {}, created_at: new Date().toISOString() },
-              { id: 6, run_id: runIdParam, event_type: 'STAGE_COMPLETE', stage: 'REMEDIATION', message: 'Patch synthesized: 8 lines added, 3 lines removed', payload: {}, created_at: new Date().toISOString() },
-              { id: 7, run_id: runIdParam, event_type: 'STAGE_START', stage: 'SCOPE_GUARD', message: 'Scope Guard validating diff budget and file boundaries', payload: {}, created_at: new Date().toISOString() },
-              { id: 8, run_id: runIdParam, event_type: 'STAGE_COMPLETE', stage: 'SCOPE_GUARD', message: 'Scope Guard passed: diff budget <= 30 lines, 1 file touched', payload: {}, created_at: new Date().toISOString() },
-              { id: 9, run_id: runIdParam, event_type: 'STAGE_START', stage: 'VERIFICATION', message: 'Executing GREEN verification probe (3/3 repeats in sandbox)', payload: {}, created_at: new Date().toISOString() },
-              { id: 10, run_id: runIdParam, event_type: 'STAGE_COMPLETE', stage: 'VERIFICATION', message: 'GREEN state confirmed: Exit code 42 on all 3/3 repeats (Blocked)', payload: {}, created_at: new Date().toISOString() },
-              { id: 11, run_id: runIdParam, event_type: 'STAGE_START', stage: 'REGRESSION', message: 'Running baseline pytest test suite in sandbox', payload: {}, created_at: new Date().toISOString() },
-              { id: 12, run_id: runIdParam, event_type: 'STAGE_COMPLETE', stage: 'REGRESSION', message: 'Zero regression guarantee met: 4/4 baseline tests passed', payload: {}, created_at: new Date().toISOString() },
-              { id: 13, run_id: runIdParam, event_type: 'STAGE_COMPLETE', stage: 'EVIDENCE', message: 'RFC 8032 Ed25519 signature generated over RFC 8785 canonical JSON', payload: {}, created_at: new Date().toISOString() },
-              { id: 14, run_id: runIdParam, event_type: 'STAGE_COMPLETE', stage: 'VERDICT', message: 'FINAL BEHAVIORAL VERDICT: GREEN_STATE_VERIFIED (12824ms)', payload: {}, created_at: new Date().toISOString() }
-            ]);
-            setCurrentStage('COMPLETED');
+            // Hydrate genuine persisted events
+            if (runData?.events && runData.events.length > 0) {
+              setEvents(runData.events);
+            }
+            if (runData?.status === 'COMPLETED' || bData?.verdict) {
+              setCurrentStage('COMPLETED');
+            }
 
-            const calls = bData.llm?.calls || [];
-            const pTok = calls.reduce((acc: number, c: any) => acc + (c.prompt_tokens || 0), 0) || 1420;
-            const cTok = calls.reduce((acc: number, c: any) => acc + (c.completion_tokens || 0), 0) || 318;
-            const lat = calls.reduce((acc: number, c: any) => acc + (c.latency_ms || 0), 0) || 2840;
-            setTokenLedger({
-              prompt_tokens: pTok,
-              completion_tokens: cTok,
-              reasoning_tokens: 0,
-              total_tokens: pTok + cTok,
-              cost_usd: 0.0,
-              latency_ms: lat,
-              calls_count: calls.length || 1
-            });
+            // Hydrate token ledger from genuine persisted records without hardcoded fallbacks
+            const calls = bData?.llm?.calls || runData?.llm_calls || [];
+            if (calls.length > 0) {
+              const pTok = calls.reduce((acc: number, c: any) => acc + (c.prompt_tokens || 0), 0);
+              const cTok = calls.reduce((acc: number, c: any) => acc + (c.completion_tokens || 0), 0);
+              const rTok = calls.reduce((acc: number, c: any) => acc + (c.reasoning_tokens || 0), 0);
+              const lat = calls.reduce((acc: number, c: any) => acc + (c.latency_ms || 0), 0);
+              setTokenLedger({
+                prompt_tokens: pTok,
+                completion_tokens: cTok,
+                reasoning_tokens: rTok,
+                total_tokens: pTok + cTok,
+                cost_usd: 0.0,
+                latency_ms: lat,
+                calls_count: calls.length
+              });
+            } else {
+              setTokenLedger(undefined);
+            }
           }
         })
         .catch((err) => console.error('Deep-link bundle fetch error:', err));
@@ -485,21 +489,25 @@ export const App: React.FC = () => {
 
           // Compute Token Ledger summary
           const calls = bundleJson.llm?.calls || [];
-          const promptTokens = calls.reduce((acc, c) => acc + (c.prompt_tokens || 0), 0);
-          const completionTokens = calls.reduce((acc, c) => acc + (c.completion_tokens || 0), 0);
-          const reasoningTokens = calls.reduce((acc, c) => acc + (c.reasoning_tokens || 0), 0);
-          const totalTokens = promptTokens + completionTokens;
-          const latencyMs = calls.reduce((acc, c) => acc + (c.latency_ms || 0), 0);
+          if (calls.length > 0) {
+            const promptTokens = calls.reduce((acc, c) => acc + (c.prompt_tokens || 0), 0);
+            const completionTokens = calls.reduce((acc, c) => acc + (c.completion_tokens || 0), 0);
+            const reasoningTokens = calls.reduce((acc, c) => acc + (c.reasoning_tokens || 0), 0);
+            const totalTokens = promptTokens + completionTokens;
+            const latencyMs = calls.reduce((acc, c) => acc + (c.latency_ms || 0), 0);
 
-          setTokenLedger({
-            prompt_tokens: promptTokens,
-            completion_tokens: completionTokens,
-            reasoning_tokens: reasoningTokens,
-            total_tokens: totalTokens,
-            cost_usd: 0.0,
-            latency_ms: latencyMs,
-            calls_count: calls.length
-          });
+            setTokenLedger({
+              prompt_tokens: promptTokens,
+              completion_tokens: completionTokens,
+              reasoning_tokens: reasoningTokens,
+              total_tokens: totalTokens,
+              cost_usd: 0.0,
+              latency_ms: latencyMs,
+              calls_count: calls.length
+            });
+          } else {
+            setTokenLedger(undefined);
+          }
         } else {
           const errData = await bundleRes.json().catch(() => ({}));
           setEvidenceError(errData.detail || 'Evidence bundle not yet available.');
