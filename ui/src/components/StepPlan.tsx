@@ -121,6 +121,21 @@ export const StepPlan: React.FC<StepPlanProps> = ({
         </div>
       </div>
 
+      {/* Loading State */}
+      {loading && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="rounded-lg border border-border-subtle bg-surface-2 p-8 flex flex-col items-center justify-center text-center space-y-3"
+        >
+          <RefreshCw className="w-7 h-7 text-emerald-400 animate-spin" aria-hidden="true" />
+          <span className="text-sm font-semibold text-slate-200 font-sans">Authorizing Plan &amp; Registering Scope Guard Invariants...</span>
+          <span className="text-xs font-sans text-slate-400 max-w-md">
+            Validating file boundaries, diff line budgets, and locking execution parameters (Spec §4.10).
+          </span>
+        </div>
+      )}
+
       {/* Error State */}
       {error && (
         <div

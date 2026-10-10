@@ -8,7 +8,10 @@ import {
   Check,
   ShieldCheck,
   KeyRound,
-  Terminal
+  Terminal,
+  RefreshCw,
+  AlertTriangle,
+  CheckCircle2
 } from 'lucide-react';
 import { EvidenceBundle } from '../types';
 
@@ -26,6 +29,9 @@ export const StepExport: React.FC<StepExportProps> = ({
   const [copiedGitApply, setCopiedGitApply] = useState(false);
   const [copiedVerify, setCopiedVerify] = useState(false);
   const [copiedFp, setCopiedFp] = useState(false);
+  const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [downloadSuccess, setDownloadSuccess] = useState<string | null>(null);
 
   const gitApplySnippet = `git apply ${runId}_patch.diff`;
   const verifyCommandSnippet = `vulntrace verify-bundle ${runId}_bundle.json`;
@@ -37,13 +43,59 @@ export const StepExport: React.FC<StepExportProps> = ({
     setTimeout(() => setter(false), 2000);
   };
 
-  const handleDownload = (format: 'diff' | 'zip' | 'bundle') => {
-    if (format === 'bundle') {
-      window.open(`/runs/${runId}/bundle`, '_blank');
-    } else {
-      window.open(`/runs/${runId}/export?format=${format}`, '_blank');
+  const handleDownload = async (format: 'diff' | 'zip' | 'bundle') => {
+    setDownloadingFormat(format);
+    setDownloadError(null);
+    setDownloadSuccess(null);
+    try {
+      const url = format === 'bundle'
+        ? `/runs/${runId}/bundle`
+        : `/runs/${runId}/export?format=${format}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        let errMsg = `HTTP ${res.status}: ${res.statusText}`;
+        try {
+          const errData = await res.json();
+          if (errData.detail) errMsg = errData.detail;
+        } catch {
+          // fallback
+        }
+        throw new Error(`Export download failed (${errMsg})`);
+      }
+      const blob = await res.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      const ext = format === 'diff' ? 'diff' : format === 'zip' ? 'zip' : 'json';
+      a.download = `${runId}_${format}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(blobUrl);
+      setDownloadSuccess(`Successfully downloaded .${ext} artifact`);
+      setTimeout(() => setDownloadSuccess(null), 4000);
+    } catch (err: any) {
+      setDownloadError(err.message || 'Download failed due to network or server error');
+    } finally {
+      setDownloadingFormat(null);
     }
   };
+
+  if (loading) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="rounded-lg border border-border-subtle bg-surface-2 p-12 flex flex-col items-center justify-center text-center space-y-3 min-h-[300px]"
+      >
+        <span className="w-8 h-8 rounded-full border-2 border-emerald-400 border-t-transparent animate-spin" aria-hidden="true" />
+        <span className="text-sm font-semibold text-slate-200 font-sans">Assembling and Signing Export Artifacts...</span>
+        <span className="text-xs text-slate-400 max-w-md font-sans">
+          Generating unified diff, compressing sanitized workspace archive, and packaging RFC 8032 sealed bundle (Spec §4.11, §4.13).
+        </span>
+      </div>
+    );
+  }
 
   if (!bundle && !loading) {
     return (
@@ -74,6 +126,32 @@ export const StepExport: React.FC<StepExportProps> = ({
         </p>
       </div>
 
+      {/* Download Feedback Alerts */}
+      {downloadError && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="rounded-lg border border-rose-800/60 bg-rose-950/30 p-4 text-xs text-rose-200 space-y-1"
+        >
+          <div className="flex items-center gap-2 font-semibold text-rose-400 font-sans">
+            <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" aria-hidden="true" />
+            <span>Artifact Download Error</span>
+          </div>
+          <p className="text-rose-300 font-sans">{downloadError}</p>
+        </div>
+      )}
+
+      {downloadSuccess && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="rounded-lg border border-emerald-700/60 bg-emerald-950/30 p-3 text-xs text-emerald-200 flex items-center gap-2 font-sans"
+        >
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" aria-hidden="true" />
+          <span>{downloadSuccess}</span>
+        </div>
+      )}
+
       {/* Engineering Handoff Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Card 1: Normalized Unified Diff */}
@@ -92,11 +170,16 @@ export const StepExport: React.FC<StepExportProps> = ({
           </div>
           <button
             type="button"
+            disabled={downloadingFormat !== null}
             onClick={() => handleDownload('diff')}
-            className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-md bg-surface-3 hover:bg-slate-700 text-slate-100 text-xs font-sans font-semibold border border-border-interactive transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+            className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-md bg-surface-3 hover:bg-slate-700 disabled:opacity-60 text-slate-100 text-xs font-sans font-semibold border border-border-interactive transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
           >
-            <Download className="w-4 h-4" aria-hidden="true" />
-            <span>Download .diff</span>
+            {downloadingFormat === 'diff' ? (
+              <RefreshCw className="w-4 h-4 animate-spin text-sky-400" aria-hidden="true" />
+            ) : (
+              <Download className="w-4 h-4" aria-hidden="true" />
+            )}
+            <span>{downloadingFormat === 'diff' ? 'Downloading...' : 'Download .diff'}</span>
           </button>
         </div>
 
@@ -116,11 +199,16 @@ export const StepExport: React.FC<StepExportProps> = ({
           </div>
           <button
             type="button"
+            disabled={downloadingFormat !== null}
             onClick={() => handleDownload('zip')}
-            className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-md bg-surface-3 hover:bg-slate-700 text-slate-100 text-xs font-sans font-semibold border border-border-interactive transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+            className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-md bg-surface-3 hover:bg-slate-700 disabled:opacity-60 text-slate-100 text-xs font-sans font-semibold border border-border-interactive transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
           >
-            <Download className="w-4 h-4" aria-hidden="true" />
-            <span>Download .zip</span>
+            {downloadingFormat === 'zip' ? (
+              <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" aria-hidden="true" />
+            ) : (
+              <Download className="w-4 h-4" aria-hidden="true" />
+            )}
+            <span>{downloadingFormat === 'zip' ? 'Downloading...' : 'Download .zip'}</span>
           </button>
         </div>
 
@@ -140,11 +228,16 @@ export const StepExport: React.FC<StepExportProps> = ({
           </div>
           <button
             type="button"
+            disabled={downloadingFormat !== null}
             onClick={() => handleDownload('bundle')}
-            className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-md bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-sans font-bold shadow-md transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+            className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-md bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-slate-950 text-xs font-sans font-bold shadow-md transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
           >
-            <Download className="w-4 h-4" aria-hidden="true" />
-            <span>Download bundle.json</span>
+            {downloadingFormat === 'bundle' ? (
+              <RefreshCw className="w-4 h-4 animate-spin text-slate-950" aria-hidden="true" />
+            ) : (
+              <Download className="w-4 h-4" aria-hidden="true" />
+            )}
+            <span>{downloadingFormat === 'bundle' ? 'Downloading...' : 'Download bundle.json'}</span>
           </button>
         </div>
       </div>

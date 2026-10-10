@@ -159,6 +159,21 @@ export const StepRequirements: React.FC<StepRequirementsProps> = ({
           </form>
         </div>
 
+        {/* Loading State */}
+        {loading && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="rounded-lg border border-border-subtle bg-surface-2 p-8 flex flex-col items-center justify-center text-center space-y-3"
+          >
+            <RefreshCw className="w-7 h-7 text-emerald-400 animate-spin" aria-hidden="true" />
+            <span className="text-sm font-semibold text-slate-200 font-sans">Evaluating Natural Language Invariants &amp; Syntactic Boundaries...</span>
+            <span className="text-xs font-sans text-slate-400 max-w-md">
+              Converting operator intent into formal acceptance invariants and checking for verifiable targets (Spec §4.9).
+            </span>
+          </div>
+        )}
+
         {/* Error State */}
         {error && (
           <div

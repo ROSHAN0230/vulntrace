@@ -70,6 +70,7 @@ export const App: React.FC = () => {
   const [evidenceBundle, setEvidenceBundle] = useState<EvidenceBundle | null>(null);
   const [evidenceLoading, setEvidenceLoading] = useState<boolean>(false);
   const [evidenceError, setEvidenceError] = useState<string | undefined>();
+  const [exportLoading, setExportLoading] = useState<boolean>(false);
 
   // 1. Theme Management
   useEffect(() => {
@@ -142,17 +143,46 @@ export const App: React.FC = () => {
     }
 
     if (stateParam === 'loading') {
-      setEvidenceLoading(true);
-      setSourceLoading(true);
+      if (stepParam === '1') setSourceLoading(true);
+      else if (stepParam === '2') setAnalysisLoading(true);
+      else if (stepParam === '3') setIntentLoading(true);
+      else if (stepParam === '4') setPlanLoading(true);
+      else if (stepParam === '5') {
+        setIsExecuting(true);
+        setCurrentStage('REPRODUCTION');
+      } else if (stepParam === '6') setEvidenceLoading(true);
+      else if (stepParam === '7') setExportLoading(true);
+      else {
+        setEvidenceLoading(true);
+        setSourceLoading(true);
+      }
       return;
     }
     if (stateParam === 'error') {
-      setEvidenceError('Verification signature rejected: Ed25519 signature mismatch (Spec §4.11 constraint)');
-      setSourceError('Ingest Guard violation: upload size exceeds maximum allowed boundary (Spec §4.1)');
+      if (stepParam === '1') {
+        setSourceError('Ingest Guard violation: upload size exceeds maximum allowed boundary (Spec §4.1)');
+      } else if (stepParam === '2') {
+        setAnalysisError('Analysis Engine Error: Please provision a workspace in Step 1 first.');
+      } else if (stepParam === '3') {
+        setIntentError('Intent Parsing Error: Requirement lacks syntactic boundary markers.');
+      } else if (stepParam === '4') {
+        setPlanError('Scope Guard rejected: Diff budget lines cannot exceed 50 or file paths outside workspace (Spec §4.10 constraint)');
+      } else if (stepParam === '5') {
+        setExecutionError('Execution halted: Controlled test failure - container sandbox memory limit exceeded (Spec §4.6 constraint)');
+      } else if (stepParam === '6') {
+        setEvidenceError('Verification signature rejected: Ed25519 signature mismatch (Spec §4.11 constraint)');
+      } else if (stepParam === '7') {
+        // Will be demonstrated through real download error action
+      }
       return;
     }
     if (stateParam === 'empty') {
-      setEvidenceBundle(null);
+      if (stepParam === '3') {
+        setRequirementText('');
+        setParsedSpec(null);
+      } else if (stepParam === '6' || stepParam === '7') {
+        setEvidenceBundle(null);
+      }
       return;
     }
 
@@ -641,7 +671,7 @@ export const App: React.FC = () => {
           <StepExport
             runId={currentRun?.id || (currentRun as any)?.run_id || 'run_studio'}
             bundle={evidenceBundle}
-            loading={false}
+            loading={exportLoading}
           />
         )}
       </main>
