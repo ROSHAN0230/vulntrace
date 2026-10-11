@@ -40,8 +40,11 @@ jobs:
 
     - name: Run Deterministic Offline Test Suite
       id: run_tests
+      shell: bash
       run: |
+        set -o pipefail
         pytest -v -m "not container and not live_network" tests/ 2>&1 | tee pytest_output.txt
+
 
     - name: Upload Test Output Log
       if: always()
