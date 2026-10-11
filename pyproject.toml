@@ -40,6 +40,7 @@ markers = [
     "container: tests requiring rootless OCI Podman container substrate and base image",
     "windows: tests requiring Windows Win32 Job Object or platform-specific features",
     "asyncio: marks tests as asyncio coroutines",
+    "live_network: tests requiring outbound public internet access (e.g. live API validation)",
 ]
 
 [tool.ruff]
