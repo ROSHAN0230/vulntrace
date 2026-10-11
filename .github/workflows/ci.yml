@@ -54,5 +54,19 @@ jobs:
         path: pytest_output.txt
         if-no-files-found: warn
 
+    - name: Emit Annotations on Failure
+      if: failure()
+      run: |
+        python -c "
+        with open('pytest_output.txt') as f:
+            lines = [l.strip() for l in f.readlines() if l.strip()]
+        failed_lines = [l for l in lines if 'FAILED' in l or 'ERROR' in l]
+        for l in failed_lines[:20]:
+            print(f'::error title=Test Failure::{l}')
+        for l in lines[-40:]:
+            print(f'::notice title=Summary::{l}')
+        "
+
+
 
 
