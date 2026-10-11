@@ -1,7 +1,7 @@
 # VulnTrace Studio — Agent Rules & Canonical Blueprint Notice
 
 > **MASTER SPECIFICATION NOTICE:**
-> The file `%USERPROFILE%\Downloads\VULNTRACE_STUDIO_SPEC.md` is the **CANONICAL MASTER SPECIFICATION** for the entire VulnTrace Studio project.
+> The file `docs/VULNTRACE_STUDIO_SPEC.md` (mirror: `%USERPROFILE%\Downloads\VULNTRACE_STUDIO_SPEC.md`) is the **CANONICAL MASTER SPECIFICATION** for the entire VulnTrace Studio project.
 > All architectural, product, security, verifier, sandbox, LLM, UI, and evidence decisions must remain strictly consistent with that specification.
 > Work must be executed strictly one milestone at a time, following explicit user instruction and approval.
 

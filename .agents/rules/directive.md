@@ -1,7 +1,7 @@
 # VulnTrace Studio — Antigravity Project Directive
 
 **MASTER SPECIFICATION NOTICE:**
-The file `%USERPROFILE%\Downloads\VULNTRACE_STUDIO_SPEC.md` is the **CANONICAL MASTER SPECIFICATION** for the entire VulnTrace Studio project.
+The file `docs/VULNTRACE_STUDIO_SPEC.md` (mirror: `%USERPROFILE%\Downloads\VULNTRACE_STUDIO_SPEC.md`) is the **CANONICAL MASTER SPECIFICATION** for the entire VulnTrace Studio project.
 It is the implementation blueprint created by the project council.
 
 ## Core Rules:

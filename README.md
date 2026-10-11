@@ -218,7 +218,7 @@ VulnTrace enforces 7 mutually exclusive terminal verdicts:
 ## 9. Clean-Room Setup Instructions
 
 ### Prerequisites
-- Python 3.10+ (Tested on Python 3.14.2)
+- Python 3.11+ (Tested on Python 3.14.2)
 - Node.js 18+ and npm
 - Git
 
@@ -258,11 +258,11 @@ npm run build
 cd ..
 
 # Start FastAPI backend (serves API & React UI)
-uvicorn vulntrace.server:app --host 127.0.0.1 --port 8001
+uvicorn vulntrace.server:app --host 127.0.0.1 --port 8000
 ```
 
 Open your browser to:
-**`http://127.0.0.1:8001`**
+**`http://127.0.0.1:8000`**
 
 ### 4. Run Test Suite
 ```bash

@@ -8,7 +8,11 @@ on:
 
 jobs:
   test:
+    name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
 
     steps:
     - name: Checkout repository with submodules
@@ -16,10 +20,34 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Set up Python 3.10
+    - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev]"
+        pip install ruff pytest pytest-asyncio httpx sse-starlette fastapi uvicorn pyyaml
+
+    - name: Run Ruff Linting
+      run: |
+        ruff check vulntrace/ tests/
+
+    - name: Run Deterministic Offline Test Suite
+      run: |
+        pytest -v -m "not container and not live_network" tests/
+
+  tier1-container:
+    name: Tier 1 Container Isolation Tests
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository with submodules
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
 
     - name: Set up Python 3.11
       uses: actions/setup-python@v5
@@ -33,10 +61,19 @@ jobs:
         pip install -e ".[dev]"
         pip install ruff pytest pytest-asyncio httpx sse-starlette fastapi uvicorn pyyaml
 
-    - name: Run Ruff Linting
+    - name: Build and register base sandbox container image
       run: |
-        ruff check vulntrace/ tests/
+        cat << 'EOF' | podman build -t vulntrace-sandbox-base:latest -
+        FROM python:3.11-slim
+        RUN apt-get update && apt-get install -y --no-install-recommends gcc python3-dev && rm -rf /var/lib/apt/lists/*
+        RUN pip install --no-cache-dir pyyaml pytest pytest-asyncio
+        RUN useradd -m -u 1000 agent
+        USER agent
+        WORKDIR /workspace
+        EOF
+        podman image exists vulntrace-sandbox-base:latest
+        echo "Base container image registered successfully."
 
-    - name: Run Test Suite
+    - name: Run Tier 1 Container Isolation Test Suite
       run: |
-        pytest -v -m "not container" tests/
+        pytest -v -m "container" tests/
