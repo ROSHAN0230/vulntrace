@@ -6,9 +6,6 @@ on:
   pull_request:
     branches: [ main ]
 
-permissions:
-  contents: write
-
 jobs:
   test:
     name: Test Suite (Python 3.11)
@@ -19,7 +16,6 @@ jobs:
       uses: actions/checkout@v4
       with:
         submodules: recursive
-        fetch-depth: 0
 
     - name: Set up Python 3.10
       uses: actions/setup-python@v5
@@ -44,22 +40,16 @@ jobs:
 
     - name: Run Deterministic Offline Test Suite
       id: run_tests
-      continue-on-error: true
       run: |
-        pytest -v -m "not container and not live_network" tests/ > pytest_output.txt 2>&1
-        echo "TEST_EXIT=$?" >> $GITHUB_ENV
+        pytest -v -m "not container and not live_network" tests/ 2>&1 | tee pytest_output.txt
 
-    - name: Publish Test Output on Failure
-      if: env.TEST_EXIT != '0'
-      run: |
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        git checkout --orphan ci-debug
-        git reset
-        git add -f pytest_output.txt
-        git commit -m "debug: pytest execution log from CI"
-        git push origin ci-debug --force
-        exit 1
+    - name: Upload Test Output Log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: pytest-offline-log
+        path: pytest_output.txt
+        if-no-files-found: warn
 
 
 
