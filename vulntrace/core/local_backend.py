@@ -88,7 +88,7 @@ class LocalSubprocessBackend(ExecutionBackend):
         source_repo = Path(source_repo).resolve()
         is_curated = is_curated_fixture(source_repo)
         if not self.unsafe_local and not is_curated:
-            env_override = os.environ.get("VULNTRACE_UNSAFE_LOCAL") in ("1", "true", "True") or os.environ.get("CI") == "true"
+            env_override = os.environ.get("VULNTRACE_UNSAFE_LOCAL") in ("1", "true", "True")
             if not env_override:
                 raise PermissionError(
                     f"Tier 0 (LocalSubprocess) refused non-curated repository '{source_repo.name}'. "

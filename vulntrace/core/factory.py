@@ -50,7 +50,7 @@ class BackendFactory:
                 force_tier = IsolationTier.LOCAL_SUBPROCESS_FALLBACK
 
         if force_tier == IsolationTier.LOCAL_SUBPROCESS_FALLBACK:
-            if repo_path and not is_curated and not effective_unsafe and os.environ.get("CI") != "true":
+            if repo_path and not is_curated and not effective_unsafe:
                 raise PermissionError(
                     f"Tier 0 (LocalSubprocess) refused non-curated repository '{repo_path.name}' without --unsafe-local. "
                     "Use Isolation Tier 1 (OCI Container) or pass unsafe_local=True."
@@ -79,7 +79,7 @@ class BackendFactory:
 
         # Container is unavailable
         if repo_path and not is_curated:
-            if effective_unsafe or os.environ.get("CI") == "true":
+            if effective_unsafe:
                 logger.warning(
                     f"BackendFactory: OCI container unavailable for non-curated repository '{repo_path.name}'. "
                     "Falling back to Tier 0 LOCAL_SUBPROCESS_FALLBACK under explicit unsafe_local override."

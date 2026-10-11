@@ -8,6 +8,7 @@ Verifies that:
 5. VerificationPipeline accepts ExecutionBackend and propagates isolation attestation to verdict evidence.
 """
 
+import os
 import pytest
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from vulntrace.core.backend import (
     IsolationTier
 )
 from vulntrace.core.local_backend import LocalSubprocessBackend
+from vulntrace.core.factory import BackendFactory
 from vulntrace.models import (
     VerificationPipelineRequest,
     RepositoryEvidence,
@@ -30,6 +32,7 @@ from vulntrace.sandbox.pipeline import VerificationPipeline
 
 BENCHMARK_DIR = Path(__file__).resolve().parent.parent / "benchmarks" / "contextual_reasoning"
 DEADCODE_DIR = Path(__file__).resolve().parent.parent / "benchmarks" / "unreachable_dead_code"
+FLASGGER_DIR = Path(__file__).resolve().parent.parent / "real_world_eval" / "flasgger"
 
 
 class TestBackendAbstractionTypes:
@@ -249,3 +252,84 @@ class TestPipelineWithBackendAbstraction:
         assert res.isolation_attestation is not None
         assert res.isolation_attestation["backend_tier"] == "LOCAL_SUBPROCESS_FALLBACK"
         assert res.isolation_attestation["verified_by_parent"] is True
+
+
+class TestSafeIsolationEnforcement:
+    """Verifies that non-curated repositories fail closed under Tier 0 even when CI=true."""
+
+    @pytest.mark.asyncio
+    async def test_tier0_refuses_non_curated_even_when_ci_is_true(self):
+        """Tier-0 LocalSubprocess must refuse non-curated repo even when CI=true."""
+        if not FLASGGER_DIR.exists():
+            pytest.skip("Flasgger submodule not present.")
+
+        old_ci = os.environ.get("CI")
+        old_unsafe = os.environ.get("VULNTRACE_UNSAFE_LOCAL")
+        try:
+            os.environ["CI"] = "true"
+            os.environ.pop("VULNTRACE_UNSAFE_LOCAL", None)
+
+            backend = LocalSubprocessBackend(unsafe_local=False)
+            with pytest.raises(PermissionError) as exc_info:
+                await backend.initialize_workspace(FLASGGER_DIR)
+            assert "Tier 0 (LocalSubprocess) refused non-curated repository" in str(exc_info.value)
+        finally:
+            if old_ci is not None:
+                os.environ["CI"] = old_ci
+            else:
+                os.environ.pop("CI", None)
+            if old_unsafe is not None:
+                os.environ["VULNTRACE_UNSAFE_LOCAL"] = old_unsafe
+            else:
+                os.environ.pop("VULNTRACE_UNSAFE_LOCAL", None)
+
+    def test_factory_fails_closed_when_container_unavailable_even_when_ci_is_true(self):
+        """BackendFactory fails closed on non-curated code when container unavailable even if CI=true."""
+        if not FLASGGER_DIR.exists():
+            pytest.skip("Flasgger submodule not present.")
+
+        old_ci = os.environ.get("CI")
+        old_unsafe = os.environ.get("VULNTRACE_UNSAFE_LOCAL")
+        try:
+            os.environ["CI"] = "true"
+            os.environ.pop("VULNTRACE_UNSAFE_LOCAL", None)
+
+            with pytest.raises(PermissionError) as exc_info:
+                BackendFactory.resolve_best_available_backend(
+                    target_repo=FLASGGER_DIR,
+                    prefer_container=False,
+                    unsafe_local=False
+                )
+            assert "is a real/non-curated codebase requiring Isolation Tier 1" in str(exc_info.value)
+        finally:
+            if old_ci is not None:
+                os.environ["CI"] = old_ci
+            else:
+                os.environ.pop("CI", None)
+            if old_unsafe is not None:
+                os.environ["VULNTRACE_UNSAFE_LOCAL"] = old_unsafe
+            else:
+                os.environ.pop("VULNTRACE_UNSAFE_LOCAL", None)
+
+    def test_factory_permits_non_curated_with_explicit_unsafe_local(self):
+        """BackendFactory permits fallback if unsafe_local=True is explicitly passed."""
+        if not FLASGGER_DIR.exists():
+            pytest.skip("Flasgger submodule not present.")
+
+        backend = BackendFactory.resolve_best_available_backend(
+            target_repo=FLASGGER_DIR,
+            prefer_container=False,
+            unsafe_local=True
+        )
+        assert backend.capabilities.tier == IsolationTier.LOCAL_SUBPROCESS_FALLBACK
+        assert getattr(backend, "unsafe_local", False) is True
+
+    def test_factory_permits_curated_fixture_under_tier0(self):
+        """BackendFactory permits curated benchmark fixtures under Tier 0."""
+        backend = BackendFactory.resolve_best_available_backend(
+            target_repo=BENCHMARK_DIR,
+            prefer_container=False,
+            unsafe_local=False
+        )
+        assert backend.capabilities.tier == IsolationTier.LOCAL_SUBPROCESS_FALLBACK
+
