@@ -39,6 +39,22 @@ jobs:
         ruff check vulntrace/ tests/
 
     - name: Run Deterministic Offline Test Suite
+      id: run_tests
+      continue-on-error: true
       run: |
-        pytest -v -m "not container and not live_network" tests/
+        pytest -v -m "not container and not live_network" tests/ 2>&1 | tee pytest_output.txt
+        echo "TEST_EXIT=${PIPESTATUS[0]}" >> $GITHUB_ENV
+
+    - name: Publish Test Summary
+      if: always()
+      run: |
+        echo "### Pytest Execution Summary" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        tail -n 120 pytest_output.txt >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        if [ "$TEST_EXIT" != "0" ]; then
+          echo "Test suite failed with exit code $TEST_EXIT"
+          exit 1
+        fi
+
 
