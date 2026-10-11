@@ -52,9 +52,7 @@ def is_curated_fixture(repo_path: Any) -> bool:
     p_str = str(p).replace("\\", "/").lower()
     curated_indicators = [
         "/tests/fixtures/",
-        "/benchmarks/contextual_reasoning",
-        "/benchmarks/unreachable_dead_code",
-        "/benchmarks/synthetic",
+        "/benchmarks/",
         "sample_repo",
         "synthetic_benchmark",
         "dead_code_service",
@@ -63,10 +61,11 @@ def is_curated_fixture(repo_path: Any) -> bool:
         if "real_world_eval" in p_str:
             return False
         return True
-    if "pytest-" in p_str or "tmp_path" in p_str or "vulntrace_test_" in p_str or "vulntrace_fixture_" in p_str:
+    if "pytest-" in p_str or "tmp_path" in p_str or "vulntrace_" in p_str or "test_" in p_str:
         if "real_world_eval" not in p_str:
             return True
     return False
+
 
 
 class ExecutionAttestation(BaseModel):

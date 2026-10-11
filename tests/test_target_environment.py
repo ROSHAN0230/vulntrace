@@ -202,8 +202,10 @@ async def test_external_repository_repo_cloud_config_execution():
         target_file="service/yaml_adapter.py",
         target_function="parse_cloud_descriptor",
         vulnerable_symbol="yaml.load",
-        use_nemotron=False  # AST patcher for fast deterministic verification
+        use_nemotron=False,  # AST patcher for fast deterministic verification
+        unsafe_local=True
     )
+
 
     res = await VerificationPipeline.run_pipeline(req)
 
