@@ -9,6 +9,7 @@ import sys
 import hashlib
 import time
 import datetime
+from pathlib import Path
 from typing import Dict, Any
 from vulntrace.models import VerificationPipelineResponse
 from vulntrace.evidence.signing import EvidenceSigner
@@ -27,6 +28,10 @@ class EvidenceExporter:
         harness_hash = cls._compute_hash(run.harness.harness_code) if run.harness else None
         patch_hash = cls._compute_hash(run.remediation.diff) if run.remediation and run.remediation.diff else None
 
+        repo_path_str = str(run.repo_path) if getattr(run, "repo_path", None) else ""
+        repo_name = Path(repo_path_str).name if repo_path_str else "repository"
+        repo_display = repo_name if (repo_path_str and Path(repo_path_str).is_absolute()) else (run.repo_path or "repository")
+
         run_id_val = getattr(run, "run_id", None) or f"run_{hashlib.sha256(f'{run.cve_id}:{run.repo_path}:{time.time()}'.encode()).hexdigest()[:12]}"
         bundle = {
             "schema_version": "1.0.0",
@@ -36,7 +41,7 @@ class EvidenceExporter:
             "token_ledger": run.token_ledger.model_dump() if getattr(run, "token_ledger", None) else None,
             "target": {
                 "cve_id": run.cve_id,
-                "repository_path": run.repo_path,
+                "repository_path": repo_display,
                 "target_file": run.harness.target_file if run.harness else None,
                 "target_function": run.harness.function_name if run.harness else None,
                 "vulnerable_call": getattr(run.harness, "vulnerable_call", "yaml.load")
@@ -199,29 +204,49 @@ class EvidenceExporter:
         intel_hashes = [intel_obj.response_hash] if (intel_obj and getattr(intel_obj, "response_hash", None)) else []
         intel_findings = [f.model_dump() for f in intel_obj.findings] if (intel_obj and getattr(intel_obj, "findings", None)) else []
 
-        # Extract LLM token ledger calls
+        # Sanitize repository name and URL to prevent host filesystem path leaks
+        repo_path_str = str(run.repo_path) if getattr(run, "repo_path", None) else ""
+        repo_name = Path(repo_path_str).name if repo_path_str else "repository"
+        repo_url = getattr(run, "repo_url", None)
+        if repo_url and not (repo_url.startswith("file://") or ":\\" in repo_url or repo_url.startswith("/") or repo_url.startswith("\\")):
+            source_url = repo_url
+        else:
+            source_url = f"local://{repo_name}"
+
+        # Extract authentic per-call LLM token ledger provenance (Spec §4.7 / §4.11)
         ledger_obj = getattr(run, "token_ledger", None)
         llm_calls = []
-        if ledger_obj and hasattr(ledger_obj, "stage_records"):
-            for rec in ledger_obj.stage_records:
-                llm_calls.append({
-                    "stage": rec.stage,
-                    "model": rec.model,
-                    "prompt_tokens": rec.prompt_tokens,
-                    "completion_tokens": rec.completion_tokens,
-                    "reasoning_tokens": rec.reasoning_tokens,
-                    "latency_ms": rec.latency_ms
-                })
-        elif ledger_obj and hasattr(ledger_obj, "model_breakdown"):
-            for model_name in ledger_obj.model_breakdown.keys():
-                llm_calls.append({
-                    "stage": "pipeline_execution",
-                    "model": model_name,
-                    "prompt_tokens": ledger_obj.total_prompt_tokens,
-                    "completion_tokens": ledger_obj.total_completion_tokens,
-                    "reasoning_tokens": ledger_obj.total_reasoning_tokens,
-                    "latency_ms": 0.0
-                })
+        if ledger_obj:
+            raw_calls = []
+            if hasattr(ledger_obj, "calls") and ledger_obj.calls:
+                raw_calls = ledger_obj.calls
+            elif hasattr(ledger_obj, "get_summary"):
+                summary = ledger_obj.get_summary()
+                raw_calls = getattr(summary, "calls", [])
+            elif hasattr(ledger_obj, "_records") and ledger_obj._records:
+                raw_calls = ledger_obj._records
+            elif isinstance(ledger_obj, dict) and "calls" in ledger_obj:
+                raw_calls = ledger_obj["calls"]
+
+            for rec in raw_calls:
+                if isinstance(rec, dict):
+                    llm_calls.append({
+                        "stage": rec.get("stage", "pipeline_execution"),
+                        "model": rec.get("model", "unknown"),
+                        "prompt_tokens": int(rec.get("prompt_tokens", 0)),
+                        "completion_tokens": int(rec.get("completion_tokens", 0)),
+                        "reasoning_tokens": int(rec.get("reasoning_tokens", 0)),
+                        "latency_ms": float(rec.get("latency_ms", 0.0))
+                    })
+                else:
+                    llm_calls.append({
+                        "stage": getattr(rec, "stage", "pipeline_execution"),
+                        "model": getattr(rec, "model", "unknown"),
+                        "prompt_tokens": int(getattr(rec, "prompt_tokens", 0)),
+                        "completion_tokens": int(getattr(rec, "completion_tokens", 0)),
+                        "reasoning_tokens": int(getattr(rec, "reasoning_tokens", 0)),
+                        "latency_ms": float(getattr(rec, "latency_ms", 0.0))
+                    })
 
         created_at_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -235,7 +260,7 @@ class EvidenceExporter:
             "python_version": run.environment.python_version if (getattr(run, "environment", None) and getattr(run.environment, "python_version", None)) else sys.version.split()[0],
             "source": {
                 "type": "local",
-                "url": getattr(run, "repo_url", None) or f"file:///{run.repo_path}".replace("\\", "/"),
+                "url": source_url,
                 "upload_sha256": None,
                 "commit": getattr(run, "git_commit", None) or "local-HEAD"
             },
@@ -264,7 +289,7 @@ class EvidenceExporter:
                 "baseline_tests": run.regression_tests
             },
             "spec": {
-                "requirement": f"Reproduce and surgically remediate {run.cve_id} in {run.repo_path}",
+                "requirement": f"Reproduce and surgically remediate {run.cve_id} in {repo_name}",
                 "parsed_spec": {
                     "must_fix": run.cve_id,
                     "must_preserve": ["application regression suite"],
