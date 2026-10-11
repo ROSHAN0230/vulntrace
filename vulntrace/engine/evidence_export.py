@@ -6,6 +6,7 @@ and strict secret sanitization.
 """
 
 import sys
+import re
 import hashlib
 import time
 import datetime
@@ -29,8 +30,15 @@ class EvidenceExporter:
         patch_hash = cls._compute_hash(run.remediation.diff) if run.remediation and run.remediation.diff else None
 
         repo_path_str = str(run.repo_path) if getattr(run, "repo_path", None) else ""
-        repo_name = Path(repo_path_str).name if repo_path_str else "repository"
-        repo_display = repo_name if (repo_path_str and Path(repo_path_str).is_absolute()) else (run.repo_path or "repository")
+        repo_path_norm = repo_path_str.replace("\\", "/").rstrip("/")
+        repo_name = repo_path_norm.split("/")[-1] if repo_path_norm else "repository"
+        is_abs = (
+            bool(re.match(r"^[a-zA-Z]:[/\\]", repo_path_str))
+            or repo_path_str.startswith("/")
+            or repo_path_str.startswith("\\")
+            or Path(repo_path_str).is_absolute()
+        )
+        repo_display = repo_name if (repo_path_str and is_abs) else (run.repo_path or "repository")
 
         run_id_val = getattr(run, "run_id", None) or f"run_{hashlib.sha256(f'{run.cve_id}:{run.repo_path}:{time.time()}'.encode()).hexdigest()[:12]}"
         bundle = {
@@ -206,9 +214,18 @@ class EvidenceExporter:
 
         # Sanitize repository name and URL to prevent host filesystem path leaks
         repo_path_str = str(run.repo_path) if getattr(run, "repo_path", None) else ""
-        repo_name = Path(repo_path_str).name if repo_path_str else "repository"
+        repo_path_norm = repo_path_str.replace("\\", "/").rstrip("/")
+        repo_name = repo_path_norm.split("/")[-1] if repo_path_norm else "repository"
         repo_url = getattr(run, "repo_url", None)
-        if repo_url and not (repo_url.startswith("file://") or ":\\" in repo_url or repo_url.startswith("/") or repo_url.startswith("\\")):
+        is_host_path = bool(
+            repo_url and (
+                repo_url.startswith("file://")
+                or bool(re.match(r"^[a-zA-Z]:[/\\]", repo_url))
+                or repo_url.startswith("/")
+                or repo_url.startswith("\\")
+            )
+        )
+        if repo_url and not is_host_path:
             source_url = repo_url
         else:
             source_url = f"local://{repo_name}"

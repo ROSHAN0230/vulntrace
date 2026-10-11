@@ -45,7 +45,6 @@ jobs:
         set -o pipefail
         pytest -v -m "not container and not live_network" tests/ 2>&1 | tee pytest_output.txt
 
-
     - name: Upload Test Output Log
       if: always()
       uses: actions/upload-artifact@v4
@@ -66,7 +65,3 @@ jobs:
         for l in lines[-40:]:
             print(f'::notice title=Summary::{l}')
         "
-
-
-
-
