@@ -10,7 +10,7 @@ Adversarial Proof Suite:
 6. Host credentials are unavailable (purged env, unmounted host paths).
 7. Child telemetry cannot forge isolation claims (parent-controlled attestation).
 8. Workspace remains isolated (disposable copy; tmpfs scratch wiped).
-9. Tier-0 LocalSubprocess refuses non-curated repos unless unsafe_local=True.
+9. Tier-0 LocalSubprocess refuses non-curated repos unconditionally (unsafe_local overrides prohibited).
 10. BackendFactory defaults real/non-curated repos to Tier 1.
 11. Verifier 3/3 RED/GREEN execution functions under Tier 1 container backend.
 """
@@ -401,19 +401,36 @@ class TestTier0RefusalAndBackendFactory:
             await backend.cleanup_workspace(ws_id)
 
     @pytest.mark.asyncio
-    async def test_tier0_allows_non_curated_with_explicit_unsafe_local(self):
-        """Tier-0 permits non-curated repo when unsafe_local=True is explicitly set."""
+    async def test_tier0_refuses_non_curated_repo_even_with_explicit_unsafe_local(self):
+        """Tier-0 must refuse non-curated repo even when unsafe_local=True is explicitly set."""
         if not FLASGGER_DIR.exists():
             pytest.skip("Flasgger submodule not present.")
 
         backend = LocalSubprocessBackend(unsafe_local=True)
-        ws_id = await backend.initialize_workspace(FLASGGER_DIR)
+        with pytest.raises(PermissionError) as exc_info:
+            await backend.initialize_workspace(FLASGGER_DIR)
+        assert "Tier 0 (LocalSubprocess) refused non-curated repository" in str(exc_info.value)
+        assert "Unsafe-local overrides are prohibited" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_tier0_refuses_non_curated_repo_even_with_env_override(self):
+        """Tier-0 must refuse non-curated repo even when VULNTRACE_UNSAFE_LOCAL=1 is set."""
+        if not FLASGGER_DIR.exists():
+            pytest.skip("Flasgger submodule not present.")
+
+        old_env = os.environ.get("VULNTRACE_UNSAFE_LOCAL")
         try:
-            assert Path(ws_id).exists()
-            att = backend.generate_attestation(ws_id)
-            assert att.backend_tier == IsolationTier.LOCAL_SUBPROCESS_FALLBACK
+            os.environ["VULNTRACE_UNSAFE_LOCAL"] = "1"
+            backend = LocalSubprocessBackend(unsafe_local=False)
+            with pytest.raises(PermissionError) as exc_info:
+                await backend.initialize_workspace(FLASGGER_DIR)
+            assert "Tier 0 (LocalSubprocess) refused non-curated repository" in str(exc_info.value)
+            assert "Unsafe-local overrides are prohibited" in str(exc_info.value)
         finally:
-            await backend.cleanup_workspace(ws_id)
+            if old_env is not None:
+                os.environ["VULNTRACE_UNSAFE_LOCAL"] = old_env
+            else:
+                os.environ.pop("VULNTRACE_UNSAFE_LOCAL", None)
 
     def test_backend_factory_resolves_tier1_for_non_curated_repo(self, container_backend):
         """BackendFactory must resolve Tier 1 for real/non-curated repositories."""

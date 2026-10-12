@@ -33,14 +33,13 @@ class BackendFactory:
         """
         Selects the best execution backend.
         1. If explicitly forced via force_tier or VULNTRACE_EXECUTION_BACKEND env var:
-           Honors the request or raises an error if unavailable. Refuses Tier 0 for non-curated repos unless unsafe_local is True.
-        2. Tier 1 (rootless container) is the mandatory default tier for all real/non-curated repositories.
-        3. If Tier 1 is unavailable on a real repository, execution is refused unless unsafe_local is explicitly enabled.
+           Honors the request or raises an error if unavailable. Refuses Tier 0 for non-curated repos unconditionally.
+        2. Tier 1 (rootless container) is the mandatory tier for all real/non-curated repositories.
+        3. If Tier 1 is unavailable on a non-curated repository, execution is strictly refused (unsafe_local override prohibited).
         4. Curated developer fixtures may run on Tier 0 with explicit degraded attestation.
         """
         repo_path = Path(target_repo).resolve() if target_repo else None
         is_curated = is_curated_fixture(repo_path)
-        effective_unsafe = unsafe_local or (os.environ.get("VULNTRACE_UNSAFE_LOCAL") in ("1", "true", "True"))
 
         env_forced = os.environ.get("VULNTRACE_EXECUTION_BACKEND")
         if env_forced:
@@ -50,13 +49,15 @@ class BackendFactory:
                 force_tier = IsolationTier.LOCAL_SUBPROCESS_FALLBACK
 
         if force_tier == IsolationTier.LOCAL_SUBPROCESS_FALLBACK:
-            if repo_path and not is_curated and not effective_unsafe:
+            if repo_path and not is_curated:
                 raise PermissionError(
-                    f"Tier 0 (LocalSubprocess) refused non-curated repository '{repo_path.name}' without --unsafe-local. "
-                    "Use Isolation Tier 1 (OCI Container) or pass unsafe_local=True."
+                    f"Tier 0 (LocalSubprocess) refused non-curated repository '{repo_path.name}'. "
+                    "Tier 0 execution is strictly restricted to curated developer fixtures. "
+                    "Real/non-curated repositories require Isolation Tier 1 (OCI Container). "
+                    "Unsafe-local overrides are prohibited under strict zero-trust isolation policy."
                 )
             logger.info("BackendFactory: Explicitly selected LOCAL_SUBPROCESS_FALLBACK (Tier 0).")
-            return LocalSubprocessBackend(unsafe_local=effective_unsafe)
+            return LocalSubprocessBackend(unsafe_local=False)
 
         if force_tier == IsolationTier.OCI_CONTAINER_ISOLATED:
             container_backend = ContainerExecutionBackend()
@@ -79,19 +80,14 @@ class BackendFactory:
 
         # Container is unavailable
         if repo_path and not is_curated:
-            if effective_unsafe:
-                logger.warning(
-                    f"BackendFactory: OCI container unavailable for non-curated repository '{repo_path.name}'. "
-                    "Falling back to Tier 0 LOCAL_SUBPROCESS_FALLBACK under explicit unsafe_local override."
-                )
-                return LocalSubprocessBackend(unsafe_local=True)
             raise PermissionError(
                 f"Repository '{repo_path.name}' is a real/non-curated codebase requiring Isolation Tier 1 "
-                "(rootless container). Podman/OCI container is not available and unsafe_local is False. "
+                "(rootless container). Podman/OCI container is not available. "
+                "Non-curated repositories cannot execute under Tier 0 (unsafe_local overrides are prohibited). "
                 "Refusing uncontained execution on host."
             )
 
         logger.info(
             "BackendFactory: Selecting LOCAL_SUBPROCESS_FALLBACK for curated fixture."
         )
-        return LocalSubprocessBackend(unsafe_local=effective_unsafe)
+        return LocalSubprocessBackend(unsafe_local=False)

@@ -234,9 +234,12 @@ Known limit, to be stated in the README: the oracle defends against common failu
 
 | Tier | Mechanism | Used for |
 |---|---|---|
-| 0 | Local subprocess | **Developer machine only.** Refuses non-curated input unless `--unsafe-local` is passed |
+| 0 | Local subprocess | **Developer machine & curated fixtures only.** Refuses non-curated or untrusted repositories unconditionally. Tier 1 is mandatory for all real/non-curated runs; `--unsafe-local` overrides are prohibited. |
 | 1 | Rootless Docker (Docker Desktop/WSL2 on Windows): no network at run time, read-only root FS, tmpfs scratch, non-root user, CPU/memory/pids limits, wall-clock timeout, no host mounts except the workspace copy | Default for all real runs |
 | 2 | Nebius sandbox / Serverless Job if access is granted **[VERIFY]** | Stretch; strongest story for the Nebius criterion |
+
+> **Owner Policy Decision (Oct 12, 2026 — Option A Strict Zero-Trust Policy):**
+> Per explicit owner authorization, non-curated or untrusted repositories must never execute using Tier 0, regardless of `unsafe_local=True`, `--unsafe-local`, or `VULNTRACE_UNSAFE_LOCAL=1`. Tier 1 rootless container isolation is mandatory for all real/untrusted repositories. Tier 0 execution is strictly restricted to curated developer fixtures.
 
 The README must state the **real** boundary of the tier used in each benchmark run. Never write "isolated sandbox" for Tier 0.
 

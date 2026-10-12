@@ -58,7 +58,7 @@ class LocalSubprocessBackend(ExecutionBackend):
                 "Host filesystem remains readable subject to ambient OS DACLs.",
                 "Network isolation is cooperative/environment-level (HTTP_PROXY redirect); raw native sockets bypass.",
                 "Dependency build hooks (setup.py/PEP 517) execute under host identity with sanitized env.",
-                "Refuses non-curated repository input unless unsafe_local=True is explicitly set."
+                "Refuses non-curated repository input unconditionally. Real/untrusted repositories require Isolation Tier 1."
             ]
         )
 
@@ -83,19 +83,17 @@ class LocalSubprocessBackend(ExecutionBackend):
     async def initialize_workspace(self, source_repo: Path) -> str:
         """
         Creates an isolated disposable directory copy on the host.
-        Refuses non-curated repository input unless explicitly permitted via unsafe_local.
+        Refuses non-curated repository input unconditionally (Spec §4.6 Strict Zero-Trust Policy).
         """
         source_repo = Path(source_repo).resolve()
         is_curated = is_curated_fixture(source_repo)
-        if not self.unsafe_local and not is_curated:
-            env_override = os.environ.get("VULNTRACE_UNSAFE_LOCAL") in ("1", "true", "True")
-            if not env_override:
-                raise PermissionError(
-                    f"Tier 0 (LocalSubprocess) refused non-curated repository '{source_repo.name}'. "
-                    "Tier 0 execution is strictly restricted to curated developer fixtures. "
-                    "Real/non-curated repositories require Isolation Tier 1 (rootless container). "
-                    "Pass unsafe_local=True or --unsafe-local to explicitly override."
-                )
+        if not is_curated:
+            raise PermissionError(
+                f"Tier 0 (LocalSubprocess) refused non-curated repository '{source_repo.name}'. "
+                "Tier 0 execution is strictly restricted to curated developer fixtures. "
+                "Real/non-curated repositories require Isolation Tier 1 (rootless container). "
+                "Unsafe-local overrides are prohibited under strict zero-trust isolation policy."
+            )
         disposable_dir = SubprocessSandboxRunner.prepare_disposable_workspace(source_repo)
         return str(disposable_dir.resolve())
 
@@ -243,7 +241,6 @@ class LocalSubprocessBackend(ExecutionBackend):
         """
         Destroys the disposable workspace and cleans up associated case virtual environment.
         """
-        import os
         SubprocessSandboxRunner.cleanup_workspace(Path(workspace_id))
         workspace_key = str(Path(workspace_id).resolve())
         self._target_py_map.pop(workspace_key, None)

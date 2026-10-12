@@ -22,14 +22,14 @@ VulnTrace defines a strictly tiered execution model:
 
 | Tier | Substrate / Mechanism | Intended Usage | Network Policy | Filesystem Policy | Identity & Limits |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Tier 0** | `LocalSubprocessBackend` (Host process + Win32 Job Object / POSIX process tree) | **Developer machines & curated fixtures only.** Refuses non-curated input unless explicitly overridden with `--unsafe-local`. | Cooperative environment proxy null-routing (`HTTP_PROXY=http://127.0.0.1:0`). Raw sockets bypass. | Disposable host workspace directory. Ambient filesystem readable under host DACLs. | Ambient host OS user; 512MB memory cap; sanitized environment variables. |
-| **Tier 1** | `ContainerExecutionBackend` (Rootless Podman / crun OCI container in WSL2/Linux) | **Default execution tier for all real-world / non-curated repositories.** | **Kernel-enforced denial:** `--network none`. Network stack unmapped. | **Read-only root FS:** `--read-only`. Ephemeral tmpfs `/tmp` (64MB). Disposable workspace mounted at `/workspace:rw`. | **Unprivileged user:** `--user 1000:1000`. Capabilities dropped: `--cap-drop ALL`, `--security-opt no-new-privileges`. Limits: 512MB RAM, 1.0 CPU, 128 PIDs, wall-clock watchdog. |
+| **Tier 0** | `LocalSubprocessBackend` (Host process + Win32 Job Object / POSIX process tree) | **Developer machines & curated fixtures only.** Refuses non-curated or untrusted repositories unconditionally. `--unsafe-local` overrides are prohibited. | Cooperative environment proxy null-routing (`HTTP_PROXY=http://127.0.0.1:0`). Raw sockets bypass. | Disposable host workspace directory. Ambient filesystem readable under host DACLs. | Ambient host OS user; 512MB memory cap; sanitized environment variables. |
+| **Tier 1** | `ContainerExecutionBackend` (Rootless Podman / crun OCI container in WSL2/Linux) | **Mandatory execution tier for all real-world / non-curated repositories.** | **Kernel-enforced denial:** `--network none`. Network stack unmapped. | **Read-only root FS:** `--read-only`. Ephemeral tmpfs `/tmp` (64MB). Disposable workspace mounted at `/workspace:rw`. | **Unprivileged user:** `--user 1000:1000`. Capabilities dropped: `--cap-drop ALL`, `--security-opt no-new-privileges`. Limits: 512MB RAM, 1.0 CPU, 128 PIDs, wall-clock watchdog. |
 | **Tier 2** | Remote Cloud Sandbox (Serverless ephemeral microVM / cloud worker) | Future extension (Spec §4.6 Tier 2). | Fully isolated VPC with egress filter. | Ephemeral disk volume destroyed on termination. | Dedicated ephemeral microVM. |
 
-> **Benchmark Boundary Disclosure (Spec §4.6 / Decision D3 / Option B):**
-> - **CASE-RW-01 (Flasgger):** Executed under **Tier 0** (`LOCAL_SUBPROCESS_FALLBACK`) with explicit `--unsafe-local` override specifically to validate host virtualenv creation and legacy Python 3.10 syntax support (**Milestone M2 Environment-Builder Compatibility Test**). It was **not** isolated under Tier 1.
-> - **CASE-RW-04 (Cloud Config Service):** Executed end-to-end under **Tier 1** (`OCI_CONTAINER_ISOLATED`), demonstrating full rootless container isolation with kernel network denial, read-only rootfs, tmpfs scratch, and unprivileged user execution.
-> - By default, all non-curated repositories refuse Tier 0 execution and mandate Tier 1 isolation.
+> **Strict Zero-Trust Policy Decision (Spec §4.6 / Decision D3 / Option A):**
+> - Non-curated or untrusted repositories must never execute using Tier 0, regardless of `unsafe_local=True`, `--unsafe-local`, or `VULNTRACE_UNSAFE_LOCAL=1`.
+> - All real-world and third-party repositories (`CASE-RW-01` Flasgger, `CASE-RW-04` Cloud Config Service) mandate **Tier 1** (`OCI_CONTAINER_ISOLATED`) rootless container isolation.
+> - Tier 0 (`LOCAL_SUBPROCESS_FALLBACK`) is strictly restricted to approved curated developer fixtures.
 
 ---
 
@@ -81,20 +81,20 @@ When Tier 1 is active, every execution (including harness reproduction, dependen
 
 ## 4. Tier 0 Refusal & Degraded Fallback Policy
 
-Tier 0 (`LocalSubprocessBackend`) executes harnesses directly on the host operating system. To protect developers and infrastructure:
+Tier 0 (`LocalSubprocessBackend`) executes harnesses directly on the host operating system. Under **Option A — Strict Zero-Trust Policy**, to protect developers and host infrastructure:
 
-1. **Refusal of Non-Curated Input:**
-   - Tier 0 explicitly inspects repository paths.
-   - Any repository that is not a known curated developer fixture (such as `tests/fixtures/sample_repo` or `tests/fixtures/deserialization/`) is **strictly refused** by default, raising `PermissionError`.
-2. **Explicit User Override (`--unsafe-local`):**
-   - Untrusted repository execution on Tier 0 requires an explicit developer opt-in (`unsafe_local=True` or `--unsafe-local`).
+1. **Unconditional Refusal of Non-Curated Input:**
+   - Tier 0 explicitly inspects repository paths (`_is_curated_fixture()`).
+   - Any repository that is not a known curated developer fixture (such as `tests/fixtures/sample_repo` or `tests/fixtures/deserialization/`) is **strictly and unconditionally refused**, raising `PermissionError`.
+2. **Prohibition of Unsafe Local Overrides:**
+   - Non-curated or untrusted repositories must never execute using Tier 0, regardless of `unsafe_local=True`, `--unsafe-local`, or `VULNTRACE_UNSAFE_LOCAL=1`.
+   - Tier 1 (`ContainerExecutionBackend`) is mandatory for all non-curated or external repositories. If Tier 1 is unavailable, execution fails closed with `PermissionError`.
 3. **Honest Labeling & Attestation:**
    - Tier 0 attestation explicitly brands runtime engines as `(DEGRADED_TIER_0)`.
    - Documentation and UI disclose: "Process executes under ambient host OS user identity without OS user separation. Network isolation is cooperative."
-4. **Benchmark Testing Context (CASE-RW-01 vs CASE-RW-04):**
-   - The `--unsafe-local` override is exercised in the real-world evaluation matrix exclusively for `CASE-RW-01` to test the host-based `EnvironmentBuilder` pipeline on legacy Python 3.10 runtimes.
-   - Zero documentation or evaluation reports claim that `CASE-RW-01` was isolated in Tier 1.
-   - `CASE-RW-04` serves as the official M3 Tier-1 Container Isolation benchmark under `OCI_CONTAINER_ISOLATED`.
+4. **Benchmark Testing Context (`CASE-RW-01` and `CASE-RW-04`):**
+   - Real-world and external repository benchmarks (including `CASE-RW-01` Flasgger and `CASE-RW-04` Cloud Config Service) execute exclusively under **Tier 1** (`OCI_CONTAINER_ISOLATED`) rootless container isolation.
+   - Tier 0 execution is never permitted for external benchmarks, preserving host boundary guarantees.
 
 ---
 

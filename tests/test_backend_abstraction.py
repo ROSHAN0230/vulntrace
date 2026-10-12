@@ -311,18 +311,52 @@ class TestSafeIsolationEnforcement:
             else:
                 os.environ.pop("VULNTRACE_UNSAFE_LOCAL", None)
 
-    def test_factory_permits_non_curated_with_explicit_unsafe_local(self):
-        """BackendFactory permits fallback if unsafe_local=True is explicitly passed."""
+    def test_factory_refuses_non_curated_even_with_explicit_unsafe_local(self):
+        """BackendFactory must refuse non-curated repo even if unsafe_local=True is passed."""
         if not FLASGGER_DIR.exists():
             pytest.skip("Flasgger submodule not present.")
 
-        backend = BackendFactory.resolve_best_available_backend(
-            target_repo=FLASGGER_DIR,
-            prefer_container=False,
-            unsafe_local=True
-        )
-        assert backend.capabilities.tier == IsolationTier.LOCAL_SUBPROCESS_FALLBACK
-        assert getattr(backend, "unsafe_local", False) is True
+        with pytest.raises(PermissionError) as exc_info:
+            BackendFactory.resolve_best_available_backend(
+                target_repo=FLASGGER_DIR,
+                prefer_container=False,
+                unsafe_local=True
+            )
+        assert "requiring Isolation Tier 1" in str(exc_info.value)
+        assert "unsafe_local overrides are prohibited" in str(exc_info.value)
+
+    def test_factory_refuses_non_curated_even_with_env_override(self):
+        """BackendFactory must refuse non-curated repo even if VULNTRACE_UNSAFE_LOCAL=1 is set."""
+        if not FLASGGER_DIR.exists():
+            pytest.skip("Flasgger submodule not present.")
+
+        old_env = os.environ.get("VULNTRACE_UNSAFE_LOCAL")
+        try:
+            os.environ["VULNTRACE_UNSAFE_LOCAL"] = "1"
+            with pytest.raises(PermissionError) as exc_info:
+                BackendFactory.resolve_best_available_backend(
+                    target_repo=FLASGGER_DIR,
+                    prefer_container=False,
+                    unsafe_local=False
+                )
+            assert "requiring Isolation Tier 1" in str(exc_info.value)
+        finally:
+            if old_env is not None:
+                os.environ["VULNTRACE_UNSAFE_LOCAL"] = old_env
+            else:
+                os.environ.pop("VULNTRACE_UNSAFE_LOCAL", None)
+
+    @pytest.mark.asyncio
+    async def test_direct_backend_construction_refuses_non_curated_even_with_unsafe_local(self):
+        """Direct LocalSubprocessBackend construction must refuse non-curated repo even with unsafe_local=True."""
+        if not FLASGGER_DIR.exists():
+            pytest.skip("Flasgger submodule not present.")
+
+        backend = LocalSubprocessBackend(unsafe_local=True)
+        with pytest.raises(PermissionError) as exc_info:
+            await backend.initialize_workspace(FLASGGER_DIR)
+        assert "Tier 0 (LocalSubprocess) refused non-curated repository" in str(exc_info.value)
+        assert "Unsafe-local overrides are prohibited" in str(exc_info.value)
 
     def test_factory_permits_curated_fixture_under_tier0(self):
         """BackendFactory permits curated benchmark fixtures under Tier 0."""

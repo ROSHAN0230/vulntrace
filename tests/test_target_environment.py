@@ -185,13 +185,13 @@ def test_provisioning_preserves_host_venv_integrity(temp_repo_dir):
         assert host_venv.stat().st_mtime == host_mtime_before
 
 
+@pytest.mark.container
 @pytest.mark.asyncio
 async def test_external_repository_repo_cloud_config_execution():
     """
-    Acceptance test for P0.2:
+    Acceptance test for P0.2 / Spec §4.6:
     Genuine external repository (real_world_eval/repo_cloud_config)
-    moves through the controlled target setup path, discovers dependencies,
-    and reaches behavioral verification.
+    moves through the controlled target setup path under mandatory Tier 1 container isolation.
     """
     external_repo = Path(__file__).resolve().parent.parent / "real_world_eval" / "repo_cloud_config"
     assert external_repo.exists()
@@ -203,9 +203,7 @@ async def test_external_repository_repo_cloud_config_execution():
         target_function="parse_cloud_descriptor",
         vulnerable_symbol="yaml.load",
         use_nemotron=False,  # AST patcher for fast deterministic verification
-        unsafe_local=True
     )
-
 
     res = await VerificationPipeline.run_pipeline(req)
 
@@ -225,3 +223,28 @@ async def test_external_repository_repo_cloud_config_execution():
 
     # Final verdict
     assert res.final_behavioral_verdict == "GREEN_STATE_VERIFIED"
+
+
+@pytest.mark.asyncio
+async def test_external_repository_refuses_tier0_unconditionally_offline():
+    """
+    Spec §4.6 Strict Zero-Trust Policy:
+    External/non-curated repository (repo_cloud_config) is strictly refused by Tier 0
+    even if unsafe_local=True is explicitly passed.
+    """
+    external_repo = Path(__file__).resolve().parent.parent / "real_world_eval" / "repo_cloud_config"
+    assert external_repo.exists()
+
+    req = VerificationPipelineRequest(
+        repo_path=str(external_repo),
+        cve_id="CVE-2020-14343",
+        target_file="service/yaml_adapter.py",
+        target_function="parse_cloud_descriptor",
+        vulnerable_symbol="yaml.load",
+        execution_backend="LOCAL_SUBPROCESS_FALLBACK",
+        unsafe_local=True,
+    )
+
+    with pytest.raises(PermissionError) as exc_info:
+        await VerificationPipeline.run_pipeline(req)
+    assert "Tier 0 (LocalSubprocess) refused non-curated repository" in str(exc_info.value)

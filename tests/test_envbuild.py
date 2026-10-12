@@ -207,11 +207,13 @@ def parse_data(raw):
     assert response.environment.build_duration_ms > 0
 
 
+@pytest.mark.container
 @pytest.mark.asyncio
 async def test_flasgger_vulnerable_commit_deterministic_verdict_3x():
     """
-    Spec §4.5 & M2 AC 1 / Requirement 8:
-    Run the Flasgger vulnerable commit (163a753) 3 consecutive times with the dedicated environment builder.
+    Spec §4.5 & §4.6 / M2 AC 1 / Requirement 8:
+    Run the Flasgger vulnerable commit (163a753) 3 consecutive times with the dedicated environment builder
+    under mandatory Isolation Tier 1 (rootless container).
     Verdicts must be 100% identical, build time and Python version recorded in bundle,
     and repository submodule returned to clean state.
     """
@@ -236,8 +238,7 @@ async def test_flasgger_vulnerable_commit_deterministic_verdict_3x():
                 cve_id="CVE-2020-14343",
                 target_file="flasgger/utils.py",
                 target_function="parse_docstring",
-                execution_backend="LOCAL_SUBPROCESS_FALLBACK",
-                unsafe_local=True,
+                execution_backend="OCI_CONTAINER_ISOLATED",
                 use_nemotron=True,
             )
             res = await VerificationPipeline.run_pipeline(req)
@@ -270,6 +271,30 @@ async def test_flasgger_vulnerable_commit_deterministic_verdict_3x():
     finally:
         # Guarantee repository submodule returns to clean tracked commit ee62207
         _git("checkout", "ee62207")
+
+
+@pytest.mark.asyncio
+async def test_flasgger_refuses_tier0_unconditionally_offline():
+    """
+    Spec §4.6 Strict Zero-Trust Policy:
+    Flasgger (real/non-curated repository) is strictly refused by Tier 0
+    even if unsafe_local=True is explicitly passed.
+    """
+    flasgger_path = Path(__file__).resolve().parent.parent / "real_world_eval" / "flasgger"
+    if not flasgger_path.exists() or not (flasgger_path / ".git").exists():
+        pytest.skip("real_world_eval/flasgger repository submodule is not present.")
+
+    req = VerificationPipelineRequest(
+        repo_path=str(flasgger_path),
+        cve_id="CVE-2020-14343",
+        target_file="flasgger/utils.py",
+        target_function="parse_docstring",
+        execution_backend="LOCAL_SUBPROCESS_FALLBACK",
+        unsafe_local=True,
+    )
+    with pytest.raises(PermissionError) as exc_info:
+        await VerificationPipeline.run_pipeline(req)
+    assert "Tier 0 (LocalSubprocess) refused non-curated repository" in str(exc_info.value)
 
 
 def test_wheel_cache_flattening_and_offline_lookup(temp_repo_dir: Path):
