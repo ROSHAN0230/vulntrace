@@ -17,6 +17,7 @@ import sys
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
+import tempfile
 import pytest
 
 from vulntrace.core.backend import (
@@ -27,6 +28,8 @@ from vulntrace.core.backend import (
 from vulntrace.core.local_backend import LocalSubprocessBackend
 from vulntrace.core.factory import BackendFactory
 from vulntrace.core.container_backend import ContainerExecutionBackend
+from vulntrace.sandbox.pipeline import VerificationPipeline
+from vulntrace.models import VerificationPipelineRequest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BENCHMARK_DIR = PROJECT_ROOT / "benchmarks" / "contextual_reasoning"
@@ -182,6 +185,30 @@ class TestSymlinkAndJunctionAliasResistance:
             )
         assert "is a real/non-curated codebase requiring Isolation Tier 1" in str(exc_info.value)
 
+    @pytest.mark.asyncio
+    async def test_external_junction_refused_by_verification_pipeline(self, tmp_path):
+        """Pipeline entry point must refuse external symlinks or junctions to approved fixtures under Tier 0."""
+        external_dir = tmp_path / "external_workspace"
+        external_dir.mkdir()
+        link_to_curated = external_dir / "aliased_curated"
+
+        try:
+            create_directory_link(link_to_curated, BENCHMARK_DIR)
+        except Exception as e:
+            pytest.skip(f"Junction/symlink creation unavailable: {e}")
+
+        req = VerificationPipelineRequest(
+            repo_path=str(link_to_curated),
+            cve_id="CVE-2020-14343",
+            target_file="service/custom_loader.py",
+            target_function="load_config",
+            vulnerable_symbol="yaml.load",
+            execution_backend="LOCAL_SUBPROCESS_FALLBACK"
+        )
+        with pytest.raises(PermissionError) as exc_info:
+            await VerificationPipeline.run_pipeline(req)
+        assert "Tier 0 (LocalSubprocess) refused non-curated repository" in str(exc_info.value)
+
     def test_symlink_with_approved_name_pointing_to_untrusted_repo_refused(self, tmp_path):
         """A link with an approved-looking name pointing to untrusted code is refused."""
         untrusted_code = tmp_path / "untrusted_payload"
@@ -222,6 +249,18 @@ class TestUnknownAndAmbiguousPathsFailClosed:
         assert is_curated_fixture(FLASGGER_DIR) is False
         assert is_curated_fixture(REPO_CLOUD_CONFIG) is False
         assert is_curated_fixture(COOKIECUTTER_DIR) is False
+
+    def test_regular_files_inside_fixture_refused(self):
+        """Files rather than directories must never be classified as repository fixtures."""
+        file_path = BENCHMARK_DIR / "service" / "custom_loader.py"
+        assert file_path.exists() and file_path.is_file()
+        assert is_curated_fixture(file_path) is False
+
+    def test_parent_fixtures_dir_itself_refused(self):
+        """Parent directories containing fixtures must never independently qualify for Tier 0."""
+        assert is_curated_fixture(PROJECT_ROOT / "tests" / "fixtures") is False
+        assert is_curated_fixture(PROJECT_ROOT / "benchmarks") is False
+        assert is_curated_fixture(PROJECT_ROOT) is False
 
     def test_backend_factory_refuses_forced_tier0_on_none_when_unspecified(self):
         """BackendFactory allows unspecified repo under force_tier but locks backend."""
@@ -402,3 +441,31 @@ class TestTrustedFixtureRegistryLifecycle:
             assert is_curated_fixture(FLASGGER_DIR) is False
         finally:
             TrustedFixtureRegistry.unregister_trusted_fixture(FLASGGER_DIR)
+
+    def test_registering_filesystem_root_refused(self, tmp_path):
+        """Registering filesystem root (C:/ or /) must be refused and not grant trust to external repos."""
+        anchor = Path(PROJECT_ROOT.anchor)
+        TrustedFixtureRegistry.register_trusted_fixture(anchor)
+        try:
+            assert is_curated_fixture(anchor) is False
+            assert is_curated_fixture(tmp_path) is False
+        finally:
+            TrustedFixtureRegistry.unregister_trusted_fixture(anchor)
+
+    def test_registering_system_tempdir_refused(self, tmp_path):
+        """Registering system temp directory must be refused and not grant trust to arbitrary temp repos."""
+        temp_dir = Path(tempfile.gettempdir())
+        TrustedFixtureRegistry.register_trusted_fixture(temp_dir)
+        try:
+            assert is_curated_fixture(temp_dir) is False
+            assert is_curated_fixture(tmp_path) is False
+        finally:
+            TrustedFixtureRegistry.unregister_trusted_fixture(temp_dir)
+
+    def test_registering_project_root_refused(self):
+        """Registering project root must be refused and not grant trust to the entire repository."""
+        TrustedFixtureRegistry.register_trusted_fixture(PROJECT_ROOT)
+        try:
+            assert is_curated_fixture(PROJECT_ROOT) is False
+        finally:
+            TrustedFixtureRegistry.unregister_trusted_fixture(PROJECT_ROOT)

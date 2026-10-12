@@ -5,6 +5,7 @@ from execution runtime substrate (Subprocess, Container, WSL2, MicroVM).
 """
 
 import os
+import tempfile
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from enum import Enum
@@ -91,37 +92,93 @@ class TrustedFixtureRegistry:
     )
 
     @classmethod
+    def _is_forbidden_or_broad_root(cls, path: Path) -> bool:
+        """
+        Validates that a candidate root is not a dangerous broad root,
+        filesystem anchor, project root, system temp root, home directory,
+        or real_world_eval repository.
+        """
+        try:
+            p_res = path.resolve()
+        except (OSError, ValueError):
+            return True
+
+        # Filesystem anchor / drive root (e.g. C:\ or /)
+        if p_res == Path(p_res.anchor) or p_res == p_res.parent:
+            return True
+
+        project_root = Path(__file__).resolve().parent.parent.parent
+        # Disallow project root or anything above it
+        if p_res == project_root or _is_path_within_root(project_root, p_res):
+            return True
+
+        # Disallow real-world evaluation directory or subdirectories
+        real_world_eval_root = (project_root / "real_world_eval").resolve()
+        if p_res == real_world_eval_root or _is_path_within_root(p_res, real_world_eval_root):
+            return True
+
+        # Disallow system temp directory root
+        try:
+            sys_temp = Path(tempfile.gettempdir()).resolve()
+            if p_res == sys_temp:
+                return True
+        except Exception:
+            pass
+
+        # Disallow user home directory
+        try:
+            user_home = Path.home().resolve()
+            if p_res == user_home:
+                return True
+        except Exception:
+            pass
+
+        return False
+
+    @classmethod
     def get_canonical_fixtures(cls) -> Set[Path]:
         """Returns the canonical resolved absolute paths of application-controlled fixtures."""
         project_root = Path(__file__).resolve().parent.parent.parent
         canonical: Set[Path] = set()
         for rel in cls.CANONICAL_FIXTURE_RELPATHS:
             p = (project_root / rel).resolve()
-            if p.exists():
+            if p.exists() and p.is_dir() and not cls._is_forbidden_or_broad_root(p):
                 canonical.add(p)
-        tests_fixtures = (project_root / "tests" / "fixtures").resolve()
-        if tests_fixtures.exists():
-            canonical.add(tests_fixtures)
         return canonical
 
     @classmethod
     def get_all_approved_roots(cls) -> Set[Path]:
         """Returns all approved fixture roots combining canonical locations and dynamic registrations."""
         roots = set(cls.get_canonical_fixtures())
-        roots.update(cls._registered_roots)
+        for r in cls._registered_roots:
+            if not cls._is_forbidden_or_broad_root(r):
+                roots.add(r)
         return roots
 
     @classmethod
     def register_trusted_fixture(cls, path: Union[str, Path]) -> None:
-        """Explicitly registers an application- or test-controlled directory as a trusted fixture."""
-        p = Path(path).resolve()
+        """
+        Explicitly registers an application- or test-controlled directory as a trusted fixture.
+        Rejects forbidden broad roots, real-world eval locations, non-existent paths, or non-directories.
+        """
+        try:
+            p = Path(path).resolve()
+        except Exception:
+            return
+        if not p.exists() or not p.is_dir():
+            return
+        if cls._is_forbidden_or_broad_root(p):
+            return
         cls._registered_roots.add(p)
 
     @classmethod
     def unregister_trusted_fixture(cls, path: Union[str, Path]) -> None:
         """Removes an explicitly registered fixture directory."""
-        p = Path(path).resolve()
-        cls._registered_roots.discard(p)
+        try:
+            p = Path(path).resolve()
+            cls._registered_roots.discard(p)
+        except Exception:
+            pass
 
     @classmethod
     def clear_dynamic_registrations(cls) -> None:
@@ -132,12 +189,18 @@ class TrustedFixtureRegistry:
     @contextmanager
     def temporary_trusted_fixture(cls, path: Union[str, Path]):
         """Context manager temporarily registering a trusted fixture location."""
-        p = Path(path).resolve()
-        cls.register_trusted_fixture(p)
         try:
-            yield p
-        finally:
-            cls.unregister_trusted_fixture(p)
+            p = Path(path).resolve()
+        except Exception:
+            p = None
+        if p and not cls._is_forbidden_or_broad_root(p) and p.exists() and p.is_dir():
+            cls.register_trusted_fixture(p)
+            try:
+                yield p
+            finally:
+                cls.unregister_trusted_fixture(p)
+        else:
+            yield path
 
 
 def is_curated_fixture(repo_path: Any) -> bool:
@@ -162,7 +225,7 @@ def is_curated_fixture(repo_path: Any) -> bool:
         return False
 
     try:
-        if not raw_path.exists():
+        if not raw_path.exists() or not raw_path.is_dir():
             return False
     except (OSError, ValueError):
         return False
@@ -178,6 +241,10 @@ def is_curated_fixture(repo_path: Any) -> bool:
 
     # Strictly reject untrusted real-world evaluation repositories unconditionally
     if _is_path_within_root(resolved_path, real_world_eval_root) or _is_path_within_root(unresolved_abs, real_world_eval_root):
+        return False
+
+    # Strictly reject forbidden or broad roots
+    if TrustedFixtureRegistry._is_forbidden_or_broad_root(resolved_path) or TrustedFixtureRegistry._is_forbidden_or_broad_root(unresolved_abs):
         return False
 
     approved_roots = TrustedFixtureRegistry.get_all_approved_roots()

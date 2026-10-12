@@ -61,7 +61,7 @@ class VerificationPipeline:
     ) -> VerificationPipelineResponse:
         t0 = time.perf_counter()
         run_id = f"run_{uuid.uuid4().hex[:12]}"
-        source_repo = Path(req.repo_path).resolve()
+        source_repo = Path(req.repo_path)
         if backend is None:
             tier_override = None
             if req.execution_backend:
