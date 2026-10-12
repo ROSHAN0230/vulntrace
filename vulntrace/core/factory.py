@@ -38,8 +38,8 @@ class BackendFactory:
         3. If Tier 1 is unavailable on a non-curated repository, execution is strictly refused (unsafe_local override prohibited).
         4. Curated developer fixtures may run on Tier 0 with explicit degraded attestation.
         """
-        repo_path = Path(target_repo).resolve() if target_repo else None
-        is_curated = is_curated_fixture(repo_path)
+        repo_path = Path(target_repo) if target_repo else None
+        is_curated = is_curated_fixture(target_repo) if target_repo else False
 
         env_forced = os.environ.get("VULNTRACE_EXECUTION_BACKEND")
         if env_forced:

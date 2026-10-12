@@ -4,10 +4,12 @@ Decouples verification logic, behavioral oracle, AST analysis, and verdict engin
 from execution runtime substrate (Subprocess, Container, WSL2, MicroVM).
 """
 
+import os
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Callable
+from typing import Dict, Any, Optional, List, Callable, Set, Union, Tuple
 from pydantic import BaseModel, Field
 
 
@@ -38,33 +40,160 @@ class BackendCapabilities(BaseModel):
     boundary_caveats: List[str] = Field(default_factory=list)
 
 
+def _is_path_within_root(target: Path, root: Path) -> bool:
+    """Checks whether target equals root or is located within root (safe against casing/separators)."""
+    try:
+        if target == root:
+            return True
+        if target.is_relative_to(root):
+            return True
+    except (ValueError, TypeError):
+        pass
+    # Case-normalized fallback for Windows / macOS
+    try:
+        target_norm = os.path.normcase(os.path.abspath(target))
+        root_norm = os.path.normcase(os.path.abspath(root))
+        if target_norm == root_norm:
+            return True
+        root_norm_sep = root_norm if root_norm.endswith(os.sep) else root_norm + os.sep
+        if target_norm.startswith(root_norm_sep):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+class TrustedFixtureRegistry:
+    """
+    Deterministic, auditable trusted fixture registry grounded in
+    application-controlled configuration (Spec §4.6 Strict Zero-Trust).
+
+    Maintains the authoritative allowlist of approved developer fixtures and
+    benchmark repositories eligible for Tier 0 (LocalSubprocess) execution.
+    Untrusted, ambiguous, or out-of-registry paths fail closed and mandate Tier 1.
+    """
+    _registered_roots: Set[Path] = set()
+
+    # Canonical relative paths of approved developer fixtures & benchmarks
+    CANONICAL_FIXTURE_RELPATHS: Tuple[str, ...] = (
+        # Phase 3 / P0.6 Curated Benchmark Scenarios (Spec §4.14, BENCHMARK_SCENARIOS)
+        "benchmarks/contextual_reasoning",
+        "benchmarks/deep_callchain",
+        "benchmarks/unreachable_dead_code",
+        "benchmarks/regression_sensitive",
+        "benchmarks/inconclusive_guard",
+        # Curated Developer & Oracle Test Fixtures (Spec §4.6, SAFETY.md §4)
+        "tests/fixtures/sample_repo",
+        "tests/fixtures/deserialization/pickle_fixed",
+        "tests/fixtures/deserialization/pickle_vulnerable",
+        "tests/fixtures/deserialization/yaml_fixed",
+        "tests/fixtures/deserialization/yaml_vulnerable",
+    )
+
+    @classmethod
+    def get_canonical_fixtures(cls) -> Set[Path]:
+        """Returns the canonical resolved absolute paths of application-controlled fixtures."""
+        project_root = Path(__file__).resolve().parent.parent.parent
+        canonical: Set[Path] = set()
+        for rel in cls.CANONICAL_FIXTURE_RELPATHS:
+            p = (project_root / rel).resolve()
+            if p.exists():
+                canonical.add(p)
+        tests_fixtures = (project_root / "tests" / "fixtures").resolve()
+        if tests_fixtures.exists():
+            canonical.add(tests_fixtures)
+        return canonical
+
+    @classmethod
+    def get_all_approved_roots(cls) -> Set[Path]:
+        """Returns all approved fixture roots combining canonical locations and dynamic registrations."""
+        roots = set(cls.get_canonical_fixtures())
+        roots.update(cls._registered_roots)
+        return roots
+
+    @classmethod
+    def register_trusted_fixture(cls, path: Union[str, Path]) -> None:
+        """Explicitly registers an application- or test-controlled directory as a trusted fixture."""
+        p = Path(path).resolve()
+        cls._registered_roots.add(p)
+
+    @classmethod
+    def unregister_trusted_fixture(cls, path: Union[str, Path]) -> None:
+        """Removes an explicitly registered fixture directory."""
+        p = Path(path).resolve()
+        cls._registered_roots.discard(p)
+
+    @classmethod
+    def clear_dynamic_registrations(cls) -> None:
+        """Clears all dynamically registered fixture locations."""
+        cls._registered_roots.clear()
+
+    @classmethod
+    @contextmanager
+    def temporary_trusted_fixture(cls, path: Union[str, Path]):
+        """Context manager temporarily registering a trusted fixture location."""
+        p = Path(path).resolve()
+        cls.register_trusted_fixture(p)
+        try:
+            yield p
+        finally:
+            cls.unregister_trusted_fixture(p)
+
+
 def is_curated_fixture(repo_path: Any) -> bool:
     """
     Determines whether a repository path is an approved curated developer fixture
     (permitted to execute under Tier 0 LocalSubprocess) or a real/non-curated repository
     (which mandates Tier 1 rootless container isolation under Spec §4.6).
+
+    Replaces self-declared marker files (.vulntrace_curated_fixture) and broad path substrings
+    with deterministic, auditable verification grounded in TrustedFixtureRegistry.
+    Fails closed for unknown, ambiguous, non-existent, and aliased paths.
     """
     if repo_path is None:
-        return True
-    p = Path(repo_path).resolve()
-    if (p / ".vulntrace_curated_fixture").exists():
-        return True
-    p_str = str(p).replace("\\", "/").lower()
-    curated_indicators = [
-        "/tests/fixtures/",
-        "/benchmarks/",
-        "sample_repo",
-        "synthetic_benchmark",
-        "dead_code_service",
-    ]
-    if any(ind in p_str for ind in curated_indicators):
-        if "real_world_eval" in p_str:
+        return False
+
+    try:
+        raw_path = Path(repo_path)
+    except Exception:
+        return False
+
+    if str(repo_path).strip() == "":
+        return False
+
+    try:
+        if not raw_path.exists():
             return False
-        return True
-    if "pytest-" in p_str or "tmp_path" in p_str or "vulntrace_" in p_str or "test_" in p_str:
-        if "real_world_eval" not in p_str:
-            return True
-    return False
+    except (OSError, ValueError):
+        return False
+
+    project_root = Path(__file__).resolve().parent.parent.parent
+    real_world_eval_root = (project_root / "real_world_eval").resolve()
+
+    try:
+        resolved_path = raw_path.resolve()
+        unresolved_abs = Path(os.path.abspath(raw_path))
+    except (OSError, ValueError):
+        return False
+
+    # Strictly reject untrusted real-world evaluation repositories unconditionally
+    if _is_path_within_root(resolved_path, real_world_eval_root) or _is_path_within_root(unresolved_abs, real_world_eval_root):
+        return False
+
+    approved_roots = TrustedFixtureRegistry.get_all_approved_roots()
+
+    # 1. Resolved canonical path MUST reside within an approved fixture root
+    resolved_match = any(_is_path_within_root(resolved_path, root) for root in approved_roots)
+    if not resolved_match:
+        return False
+
+    # 2. Input path before symlink/junction resolution MUST ALSO reside within an approved fixture root.
+    # This prevents external repositories from aliasing into an approved location using junctions/symlinks.
+    unresolved_match = any(_is_path_within_root(unresolved_abs, root) for root in approved_roots)
+    if not unresolved_match:
+        return False
+
+    return True
 
 
 

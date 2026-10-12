@@ -85,16 +85,17 @@ class LocalSubprocessBackend(ExecutionBackend):
         Creates an isolated disposable directory copy on the host.
         Refuses non-curated repository input unconditionally (Spec §4.6 Strict Zero-Trust Policy).
         """
-        source_repo = Path(source_repo).resolve()
         is_curated = is_curated_fixture(source_repo)
         if not is_curated:
+            repo_name = Path(source_repo).name if source_repo else "unknown"
             raise PermissionError(
-                f"Tier 0 (LocalSubprocess) refused non-curated repository '{source_repo.name}'. "
+                f"Tier 0 (LocalSubprocess) refused non-curated repository '{repo_name}'. "
                 "Tier 0 execution is strictly restricted to curated developer fixtures. "
                 "Real/non-curated repositories require Isolation Tier 1 (rootless container). "
                 "Unsafe-local overrides are prohibited under strict zero-trust isolation policy."
             )
-        disposable_dir = SubprocessSandboxRunner.prepare_disposable_workspace(source_repo)
+        resolved_source = Path(source_repo).resolve()
+        disposable_dir = SubprocessSandboxRunner.prepare_disposable_workspace(resolved_source)
         return str(disposable_dir.resolve())
 
     async def provision_dependencies(
