@@ -22,5 +22,9 @@ def _register_conformance_fixture(request):
         temp_repo_dir = request.getfixturevalue("temp_repo_dir")
         with TrustedFixtureRegistry.temporary_trusted_fixture(temp_repo_dir):
             yield
+    elif mod_name in ("test_mutations", "tests.test_mutations") and "temp_mutated_repo" in request.fixturenames:
+        temp_mutated_repo = request.getfixturevalue("temp_mutated_repo")
+        with TrustedFixtureRegistry.temporary_trusted_fixture(temp_mutated_repo):
+            yield
     else:
         yield
