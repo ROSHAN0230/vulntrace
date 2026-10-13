@@ -469,3 +469,143 @@ class TestTrustedFixtureRegistryLifecycle:
             assert is_curated_fixture(PROJECT_ROOT) is False
         finally:
             TrustedFixtureRegistry.unregister_trusted_fixture(PROJECT_ROOT)
+
+
+class TestDynamicRegistryAuthorityAmendments:
+    """
+    Verifies Amendments A and B for dynamic registry authority hardening.
+    Amendment A:
+    - Dedicated dynamic-registration validation path rejects any candidate path if either
+      its original absolute path or its resolved destination lies within PROJECT_ROOT.
+    - Broad in-project directories (benchmarks, tests, tests/fixtures, etc.) cannot be dynamically registered.
+    - get_all_approved_roots() independently re-validates dynamic roots on every call.
+    - External temporary test fixtures outside PROJECT_ROOT can register and unregister securely.
+
+    Amendment B:
+    - Canonical allowlist verification verifies that every canonical path originates from
+      CANONICAL_FIXTURE_RELPATHS, exists, is a directory, cannot be redirected through symlinks
+      or NTFS junctions, and resolves to its intended location inside PROJECT_ROOT.
+    - Canonical fixtures are preserved and remain curated under Tier 0.
+    """
+
+    def test_dynamic_registration_rejects_broad_in_project_directories(self):
+        """Dynamic registration must refuse all broad in-project directories."""
+        for broad in TrustedFixtureRegistry.FORBIDDEN_BROAD_IN_PROJECT_RELPATHS:
+            broad_path = PROJECT_ROOT / broad
+            if broad_path.exists():
+                TrustedFixtureRegistry.register_trusted_fixture(broad_path)
+                try:
+                    assert broad_path.resolve() not in TrustedFixtureRegistry.get_all_approved_roots()
+                    assert is_curated_fixture(broad_path) is False
+                finally:
+                    TrustedFixtureRegistry.unregister_trusted_fixture(broad_path)
+
+    def test_dynamic_registration_rejects_arbitrary_in_project_paths(self):
+        """Dynamic registration must refuse any path within PROJECT_ROOT."""
+        in_project_candidates = [
+            PROJECT_ROOT / "vulntrace",
+            PROJECT_ROOT / "docs",
+            PROJECT_ROOT / "ui",
+            PROJECT_ROOT / "real_world_eval",
+            PROJECT_ROOT / "real_world_eval" / "flasgger",
+            PROJECT_ROOT / "tests" / "fixtures",
+        ]
+        for candidate in in_project_candidates:
+            if candidate.exists():
+                TrustedFixtureRegistry.register_trusted_fixture(candidate)
+                try:
+                    assert candidate.resolve() not in TrustedFixtureRegistry.get_all_approved_roots()
+                    assert is_curated_fixture(candidate) is False
+                finally:
+                    TrustedFixtureRegistry.unregister_trusted_fixture(candidate)
+
+    def test_dynamic_registration_rejects_external_link_targeting_in_project_path(self, tmp_path):
+        """
+        External directory link (symlink/junction) pointing into PROJECT_ROOT must be rejected
+        because its resolved destination lies within PROJECT_ROOT (Amendment A).
+        """
+        external_link = tmp_path / "link_to_benchmarks"
+        create_directory_link(external_link, PROJECT_ROOT / "benchmarks")
+
+        TrustedFixtureRegistry.register_trusted_fixture(external_link)
+        try:
+            assert external_link.resolve() not in TrustedFixtureRegistry.get_all_approved_roots()
+            assert is_curated_fixture(external_link) is False
+        finally:
+            TrustedFixtureRegistry.unregister_trusted_fixture(external_link)
+
+    def test_dynamic_revalidation_drops_deleted_dynamic_roots(self, tmp_path):
+        """get_all_approved_roots() independently re-validates dynamic roots and drops deleted ones."""
+        ephemeral = tmp_path / "ephemeral_fixture"
+        ephemeral.mkdir()
+
+        TrustedFixtureRegistry.register_trusted_fixture(ephemeral)
+        try:
+            assert ephemeral.resolve() in TrustedFixtureRegistry.get_all_approved_roots()
+            assert is_curated_fixture(ephemeral) is True
+
+            # Delete the directory from disk
+            ephemeral.rmdir()
+
+            # Dynamic revalidation should detect it is gone
+            assert ephemeral.resolve() not in TrustedFixtureRegistry.get_all_approved_roots()
+            assert is_curated_fixture(ephemeral) is False
+        finally:
+            TrustedFixtureRegistry.unregister_trusted_fixture(ephemeral)
+
+    def test_temporary_trusted_fixture_rejects_in_project_path(self):
+        """temporary_trusted_fixture must not register in-project directories."""
+        broad_dir = PROJECT_ROOT / "benchmarks"
+        with TrustedFixtureRegistry.temporary_trusted_fixture(broad_dir):
+            assert broad_dir.resolve() not in TrustedFixtureRegistry.get_all_approved_roots()
+            assert is_curated_fixture(broad_dir) is False
+
+    def test_canonical_fixtures_intact_and_exact_count(self):
+        """get_canonical_fixtures() returns exactly the 10 authorized canonical fixtures."""
+        canonical = TrustedFixtureRegistry.get_canonical_fixtures()
+        assert len(canonical) == 10
+        for p in canonical:
+            assert p.exists()
+            assert p.is_dir()
+            assert is_curated_fixture(p) is True
+            # Existing subdirectories inside canonical fixtures inherit curated status
+            for sub in p.iterdir():
+                if sub.is_dir():
+                    assert is_curated_fixture(sub) is True
+                    break
+
+    def test_canonical_fixtures_reject_symlink_redirection(self):
+        """If a canonical fixture is intercepted/redirected via symlink or junction, it is rejected (Amendment B)."""
+        with patch("vulntrace.core.backend._is_symlink_or_junction", return_value=True):
+            canonical = TrustedFixtureRegistry.get_canonical_fixtures()
+            assert len(canonical) == 0
+
+    def test_canonical_fixtures_reject_path_traversal_or_absolute_paths(self):
+        """Malicious relpaths with .. or absolute paths in allowlist are rejected."""
+        with patch.object(
+            TrustedFixtureRegistry,
+            "CANONICAL_FIXTURE_RELPATHS",
+            ("../outside_repo", "/etc/passwd", "benchmarks/../../outside")
+        ):
+            canonical = TrustedFixtureRegistry.get_canonical_fixtures()
+            assert len(canonical) == 0
+
+    def test_external_dynamic_fixture_lifecycle(self, tmp_path):
+        """Legitimate external test fixtures outside PROJECT_ROOT function normally."""
+        ext_repo = tmp_path / "valid_external_test_fixture"
+        ext_repo.mkdir()
+        subpkg = ext_repo / "subpkg"
+        subpkg.mkdir()
+
+        assert is_curated_fixture(ext_repo) is False
+        assert is_curated_fixture(subpkg) is False
+
+        with TrustedFixtureRegistry.temporary_trusted_fixture(ext_repo):
+            assert ext_repo.resolve() in TrustedFixtureRegistry.get_all_approved_roots()
+            assert is_curated_fixture(ext_repo) is True
+            assert is_curated_fixture(subpkg) is True
+
+        assert ext_repo.resolve() not in TrustedFixtureRegistry.get_all_approved_roots()
+        assert is_curated_fixture(ext_repo) is False
+        assert is_curated_fixture(subpkg) is False
+
