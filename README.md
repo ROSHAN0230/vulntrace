@@ -37,43 +37,49 @@ Modern Software Composition Analysis (SCA) scanners match package version string
 
 ---
 
-## 2. Competitive Advantage Matrix
+## 2. Architectural Comparison & Evaluated Approach
 
-| Capability / Dimension | Traditional SCA (Manifest Scanning) | LLM Coding Agents (Copilot Workspace) | VulnTrace |
+| Capability / Dimension | Manifest-Only SCA (Version Matching) | Conversational LLM Assistants | VulnTrace Evaluated Architecture |
 | :--- | :--- | :--- | :--- |
-| **Detection Source** | Lockfile / manifest version regex | User prompts / heuristics | Live OSV.dev + Tavily Threat Intel |
+| **Detection Source** | Lockfile / manifest version matching | Prompt-driven / heuristic | Live OSV.dev + Tavily Threat Intel |
 | **Reachability Analysis** | Manifest matching without call-graph verification | None | Multi-file AST Call-Graph from Entrypoints |
 | **False Positive Suppression** | Manual developer triage | Heuristic / ungrounded | Automated (uncalled dead code labeled FP) |
-| **Behavioral Reproduction** | None | None (hallucination risk) | Automated in Tier 1 rootless container (Tier 0 local fallback for dev fixtures) |
-| **Remediation Method** | Major/minor version bump (often breaking) | Full-file LLM rewrite | Surgical minimal AST codemod |
-| **Remediation Quality** | High regression rate | Hallucination / scope creep | Strictly scoped (<= 10 lines, 1 file) |
-| **Post-Patch Trust Boundary** | None | Assumes build passes | **Parent Trust Audit**: Disk sentinel + Exit 42 |
-| **Regression Guarantee** | None | Optional user prompt | Contained container pytest execution (Tier 0 local fallback for dev fixtures) |
-| **Audit Evidence** | Alert list CSV | Transient chat log | Deterministic SHA-256 Hashed JSON + Structured Markdown |
+| **Behavioral Reproduction** | Not supported (metadata-only) | Relies on user prompts / manual setup | Automated in Tier 1 rootless container (Tier 0 restricted strictly to approved canonical fixtures) |
+| **Remediation Method** | Dependency version bump in manifest | Prompt-driven multi-line code rewrite | Surgical minimal AST codemod |
+| **Remediation Bounds** | Version change without diff bounding | Unbounded edits / scope expansion | Enforced minimality gate (<= 10 lines, 1 file) |
+| **Post-Patch Trust Boundary** | None (manifest re-scan only) | Relies on external CI or manual testing | **Parent Trust Audit**: Physical disk sentinel verification + Exit 42 |
+| **Regression Verification** | None in scanner workflow | Optional user prompt | Contained container pytest execution (Tier 0 restricted strictly to approved canonical fixtures) |
+| **Audit Artifacts** | Static report / CSV / SARIF | Unstructured chat log | Deterministic SHA-256 Hashed JSON + Structured Markdown |
+
+*Note on scope and comparison: The table above characterizes architectural design differences evaluated across the Python dependency vulnerability scenarios documented in Sections 3 and 4. It reflects the structural properties of manifest-matching scanners and general conversational coding assistants, not a formal head-to-head empirical benchmark across commercial third-party products.*
 
 ---
 
-## 3. Grounded Evaluation Metrics (Independent Benchmark Suite)
+## 3. Historical Evaluation Baseline (Commit 0aa3e1e Benchmark Run)
 
-Pursuant to strict evaluation integrity, VulnTrace **does not invent a single ungrounded "accuracy" percentage**. Every metric is reported with an explicit numerator and denominator grounded in observable runtime execution across 4 evaluation cases across 3 repositories (recorded on commit `0aa3e1e` benchmark run):
+Pursuant to strict evaluation integrity, VulnTrace **does not invent a single ungrounded "accuracy" percentage**. Every metric is reported with an explicit numerator and denominator grounded in observable runtime execution across 4 evaluation cases across 3 repositories, recorded as a **historical baseline on commit `0aa3e1e` under the project's earlier execution policy**:
+
+> **Historical Execution Policy & Baseline Context (Commit `0aa3e1e`):**  
+> The measurements below reflect an earlier execution policy (Option B) in effect at commit `0aa3e1e`. In that historical run, `CASE-RW-01` (Flasgger) was evaluated under Tier 0 (`LOCAL_SUBPROCESS_FALLBACK`) with an explicit `--unsafe-local` override to test host environment builder compatibility, halting with `UNEXPECTED_FAILURE` due to a missing runtime dependency (`jsonschema`).  
+> 
+> **Current Policy Distinction:** Under the subsequent **Option A Strict Zero-Trust Policy** (enforced in Pre-M7), Tier 0 is strictly restricted to approved canonical developer fixtures registered in `TrustedFixtureRegistry`. Real-world and non-curated repositories (including `CASE-RW-01`) unconditionally mandate **Tier 1** (`OCI_CONTAINER_ISOLATED`) rootless container execution; no `--unsafe-local` flag authorizes Tier 0 execution. Formal re-benchmarking of `CASE-RW-01` under full Tier 1 isolation remains pending for future milestone evaluation, and no unevidenced numbers are fabricated.
 
 - **Total Evaluation Cases:** `4` (across 3 repositories: `flasgger`, `cookiecutter`, `repo_cloud_config`)
 - **Reachable Paths Identified:** `2 of 4 cases` (`CASE-RW-01` Flasgger, `CASE-RW-04` Cloud Config)
 - **No-Static-Path False Positive Suppressions:** `2 of 4 cases` (`CASE-RW-02` Flasgger patched, `CASE-RW-03` Cookiecutter)
 - **Behavioral Reproductions Attempted:** `2 of 4 cases` (`CASE-RW-01`, `CASE-RW-04`)
-- **Behavioral Reproductions Succeeded:** `1 of 2 attempted cases` (`CASE-RW-04` reproduced; `CASE-RW-01` halted with `UNEXPECTED_FAILURE` due to runtime dependency/environment incompatibility)
+- **Behavioral Reproductions Succeeded:** `1 of 2 attempted cases` (`CASE-RW-04` reproduced; `CASE-RW-01` halted with `UNEXPECTED_FAILURE` due to missing runtime dependency `jsonschema`)
 - **Patch Proposals Generated:** `1 of 4 cases` (`CASE-RW-04` via NVIDIA Nemotron 3 Ultra)
 - **Patches Accepted by AST Syntax & Diff Gates:** `1 of 1 generated patches` (`CASE-RW-04`)
 - **Patches Rejected:** `0 of 1 generated patches in real-world suite` (Adversarial rejection proven in unit suite: 1 syntax error, 1 empty diff)
 - **Regression Failures:** `0 of 1 remediated real-world cases` (4 of 4 pytests passed in `CASE-RW-04`)
 - **Complete Verified Remediations:** `1 of 4 cases` (`CASE-RW-04`: RED -> Nemotron -> GREEN -> Pytests Pass)
-- **Infrastructure-Blocked Runs:** `0 of 4 cases` (CASE-RW-04 executed under rootless container isolation `OCI_CONTAINER_ISOLATED`; CASE-RW-01 executed under `LOCAL_SUBPROCESS_FALLBACK` with explicit `--unsafe-local` override for M2 Environment-Builder compatibility test)
 - **Average Verification Pipeline Latency:** `2,148.50 ms`
 - **Model Token Usage (Nemotron 3 Ultra):** `251 prompt tokens, 139 completion tokens (84 reasoning tokens)`
 
 ---
 
-## 4. 16-Point Independent Repository Evaluation Matrix
+## 4. 16-Point Historical Evaluation Matrix (Commit 0aa3e1e Baseline)
 
 | Attribute | CASE-RW-01 (Flasgger Vulnerable) | CASE-RW-02 (Flasgger Patched) | CASE-RW-03 (Cookiecutter SCA FP) | CASE-RW-04 (Cloud Config Service) |
 | :--- | :--- | :--- | :--- | :--- |
@@ -91,12 +97,13 @@ Pursuant to strict evaluation integrity, VulnTrace **does not invent a single un
 | **12. Post-Patch Behavior**| `UNEXPECTED_FAILURE` | `SKIPPED` | `SKIPPED` | `GREEN_STATE_BLOCKED` (Exit 42, parent verified) |
 | **13. Regression Result** | `SKIPPED` | `NOT_REQUIRED` | `NOT_REQUIRED` | `PASSED` (4/4 pytests passed cleanly) |
 | **14. Final Verdict** | `UNEXPECTED_FAILURE` | `NO_VULNERABILITIES_FOUND` | `UNREACHABLE_FALSE_POSITIVE` | **`GREEN_STATE_VERIFIED`** |
-| **15. Execution Tier Used** | **Tier 0** (`LOCAL_SUBPROCESS_FALLBACK` with explicit `--unsafe-local` for M2 Environment-Builder test) | **Tier 0** (Static suppression before harness execution) | **Tier 0** (Static suppression before harness execution) | **Tier 1** (`OCI_CONTAINER_ISOLATED`, rootless container default) |
+| **15. Execution Tier Used** | **Tier 0** (Historical run at commit `0aa3e1e` with `--unsafe-local`; prohibited under current Option A) | **Tier 0** (Static suppression before harness execution) | **Tier 0** (Static suppression before harness execution) | **Tier 1** (`OCI_CONTAINER_ISOLATED`, rootless container default) |
 | **16. Disclosed Limitations**| Requires target repository runtime dependencies installed in environment. | Static analysis proves absence of symbol only. | Static AST does not resolve dynamic plugin hooks. | Verification proves defense against evaluated exploit payload under verified execution tier. |
 
-> **Isolation Tier Boundary Disclosure (Option B / Spec §4.6 Truth-in-Advertising):**
-> - **CASE-RW-01 (Flasgger):** Classified and executed strictly as an **M2 Environment-Builder Compatibility Test** under **Tier 0** (`LOCAL_SUBPROCESS_FALLBACK`) with explicit `--unsafe-local` override (verifying host virtualenv creation and legacy Python 3.10 syntax support). It was **not** isolated under Tier 1.
-> - **CASE-RW-04 (Cloud Config Service):** Executed end-to-end under **Tier 1** (`OCI_CONTAINER_ISOLATED`), proving full rootless container isolation with kernel network denial (`--network none`), read-only root filesystem, tmpfs scratch, dropped capabilities, and unprivileged user execution. Zero documentation or metadata claims that CASE-RW-01 was isolated in Tier 1.
+> **Historical Execution & Isolation Tier Policy Disclosure:**
+> - **CASE-RW-01 (Flasgger):** In the recorded historical benchmark at commit `0aa3e1e`, Flasgger was classified and executed strictly as an M2 Environment-Builder compatibility test under **Tier 0** (`LOCAL_SUBPROCESS_FALLBACK`) with an explicit `--unsafe-local` override (verifying host virtualenv creation and legacy Python syntax support), halting with `UNEXPECTED_FAILURE` due to missing `jsonschema`. It was **not** isolated under Tier 1 in that historical run. Under the current **Option A Strict Zero-Trust Policy**, this override is completely prohibited: non-curated repositories are unconditionally refused by Tier 0 and require Tier 1 rootless container isolation.
+> - **CASE-RW-04 (Cloud Config Service):** Executed end-to-end under **Tier 1** (`OCI_CONTAINER_ISOLATED`), proving full rootless container isolation with kernel network denial (`--network none`), read-only root filesystem, tmpfs scratch, dropped capabilities, and unprivileged user execution.
+> - Zero documentation or metadata claims that CASE-RW-01 was isolated in Tier 1 during the commit `0aa3e1e` run. Formal re-benchmarking of CASE-RW-01 under Tier 1 is pending.
 
 ---
 
@@ -171,9 +178,9 @@ SCA tools generate immense alert fatigue by warning on every library version in 
 VulnTrace analyzes all Python files using an AST Call-Graph Solver tracing from top-level repository entrypoints down to candidate vulnerable sink functions (e.g. `yaml.load`). If vulnerable functions are only found in uncalled dead code, VulnTrace classifies the alert as `UNREACHABLE_FALSE_POSITIVE`, preventing unnecessary work.
 
 ### Q3. What makes behavioral verification safe?
-All execution occurs in disposable workspaces. VulnTrace implements a tiered isolation architecture (`docs/SAFETY.md`):
-- **Tier 1 (Rootless OCI Container):** The default execution tier for all real-world/non-curated repositories. Harnesses run in a rootless container (Podman in WSL2/Linux) with kernel network denial (`--network none`), read-only root filesystem (`--read-only`), ephemeral tmpfs (`/tmp`), unprivileged non-root execution (`--user 1000:1000`), CPU/memory/PIDs limits (`--memory 512m --cpus 1.0 --pids-limit 128`), wall-clock timeout watchdog, and zero host mounts except the disposable workspace copy.
-- **Tier 0 (Local Subprocess Fallback):** Developer machine execution for curated fixtures only. **Tier 0 does not provide isolation**—it runs as the ambient host user with Win32 Job Object cleanup, memory caps, and cooperative proxy null-routing, and strictly refuses non-curated repositories unless `--unsafe-local` is passed. Payloads in all tiers use target-bound benign object instantiation (writing a timestamped sentinel marker) rather than destructive shell commands.
+All execution occurs in disposable workspaces. VulnTrace implements a strictly tiered isolation architecture (`docs/SAFETY.md`):
+- **Tier 1 (Rootless OCI Container):** The mandatory default execution tier for all real-world/non-curated repositories. Harnesses run in a rootless container (Podman in WSL2/Linux) with kernel network denial (`--network none`), read-only root filesystem (`--read-only`), ephemeral tmpfs (`/tmp`), unprivileged non-root execution (`--user 1000:1000`), CPU/memory/PIDs limits (`--memory 512m --cpus 1.0 --pids-limit 128`), wall-clock timeout watchdog, and zero host mounts except the disposable workspace copy.
+- **Tier 0 (Local Subprocess Fallback):** Developer machine execution strictly restricted to approved canonical fixtures registered in `TrustedFixtureRegistry`. **Tier 0 does not provide operating system isolation, user separation, or container virtualization**—it runs as the ambient host user with Win32 Job Object cleanup, memory caps, and cooperative proxy null-routing. Under the Option A Strict Zero-Trust policy, Tier 0 strictly and unconditionally refuses all non-curated or untrusted repositories. No unsafe-local override (`--unsafe-local`, `unsafe_local=True`, or `VULNTRACE_UNSAFE_LOCAL=1`) authorizes Tier 0 execution of non-curated repositories. Payloads in all tiers use target-bound benign object instantiation (writing a timestamped sentinel marker) rather than destructive shell commands.
 
 ### Q4. Why is the post-patch check trusted?
 VulnTrace implements a strict **Parent Trust Boundary**. The parent runner never trusts child-process stdout or self-reporting. It independently audits the physical filesystem to ensure the sentinel file was NEVER created, evaluates in-harness positive controls to ensure benign functionality survived, and mandates exit code 42 (indicating an intentional security block).
@@ -188,7 +195,7 @@ Nemotron 3 Ultra (hosted on Nebius Token Factory) generates surgical, AST-parsed
 Tavily Search API queries live CVE intelligence, NVD/OSV advisories, and technical PoC disclosures. Verified CVE-specific findings returned by Tavily are filtered for strict relevance and then injected directly into NVIDIA Nemotron 3 Ultra's reasoning context, providing the model with grounded real-world vulnerability context and exploit mechanics when synthesizing minimal, surgical remediations.
 
 ### Q8. What is the status of ConTree Cloud?
-ConTree Cloud returns `PERMISSION_DENIED (HTTP 403)` due to token-level sandbox permissions. Rather than faking cloud execution, VulnTrace truthfully discloses `LOCAL_SUBPROCESS_FALLBACK` and documents shared host OS kernel boundaries.
+ConTree Cloud sandboxing was evaluated during initial hackathon integration testing (last verified 2026-10-02), where the API returned `PERMISSION_DENIED (HTTP 403)` on `/sandboxes` because provided credentials lacked sandbox provisioning permissions. Rather than simulating or falsifying cloud execution, VulnTrace truthfully discloses this limitation. VulnTrace executes using verified local containment engines: Tier 1 rootless container isolation (`OCI_CONTAINER_ISOLATED`) is mandatory for all non-curated/untrusted code, while Tier 0 (`LOCAL_SUBPROCESS_FALLBACK`) is strictly restricted to approved canonical developer fixtures.
 
 ### Q9. What are VulnTrace's terminal states?
 VulnTrace enforces 7 mutually exclusive terminal verdicts:
@@ -204,14 +211,20 @@ VulnTrace enforces 7 mutually exclusive terminal verdicts:
 
 ## 8. 3-Minute Demo Video Storyboard
 
-| Timestamp | Phase | Visual / Screen Action | Voiceover Script |
+> **Storyboard Scope & Scenario Context:**  
+> The walkthrough below illustrates an end-to-end demonstration covering two distinct evaluation scenarios:  
+> 1. **Reachability False-Positive Suppression (`CASE-RW-03` Cookiecutter):** Suppressing uncalled dead-code alerts before detonation.  
+> 2. **Autonomous Verified Remediation Lifecycle (`CASE-RW-04` Cloud Config Service):** Synthesizing a reproduction harness, observing RED state Exit 0, generating a surgical 2-line Nemotron patch, verifying GREEN state Exit 42, and confirming 4/4 passing regression tests under Tier 1 container isolation.  
+> *(Screen actions, UI sequences, and voiceover lines are illustrative demonstration scripts presenting the actual runtime verification outputs of these two cases).*
+
+| Timestamp | Phase | Illustrative Screen Action | Voiceover Script |
 | :--- | :--- | :--- | :--- |
-| **0:00 - 0:30** | **The Problem** | Show SCA alert board with 50+ critical alerts for PyYAML. Point to Cookiecutter. | *"Every developer knows the pain of SCA alert fatigue. You get dozens of critical alerts, but which ones are actually reachable? Today, we introduce VulnTrace."* |
-| **0:30 - 1:00** | **Reachability** | Click "Inspect Repository" on Cookiecutter. Click "Analyze AST Reachability". Graph displays `UNREACHABLE_FALSE_POSITIVE`. | *"VulnTrace maps the full AST call-graph from entrypoints. Cookiecutter requires PyYAML, but only calls safe_load. VulnTrace instantly suppresses this false positive."* |
-| **1:00 - 1:45** | **Reproduction (RED)** | Select Cloud Config microservice. Click "Run Defensive Verification". Terminal streams pre-patch detonation. RED state Exit 0 confirmed. | *"On a genuinely vulnerable service, VulnTrace synthesizes a target-bound harness and detonates it in an isolated disposable sandbox. Sentinel created on disk: RED state confirmed."* |
-| **1:45 - 2:20** | **Nemotron Patch** | Remediation card displays NVIDIA Nemotron 3 Ultra streaming diff. Patch Delta card shows 2 lines changed across 1 file. | *"Next, NVIDIA Nemotron 3 Ultra synthesizes a surgical 2-line codemod. The AST validator parses the syntax before anything touches disk. Minimality criterion met."* |
-| **2:20 - 2:45** | **Differential Proof (GREEN)** | Differential Proof table shows Before Exit 0 vs After Exit 42. Parent Trust audit confirms sentinel absent on disk. | *"VulnTrace re-runs the identical harness against the patched code. The parent runner verifies Exit 42 and clean disk. Zero trust in child claims."* |
-| **2:45 - 3:00** | **Regressions & Export** | Pytest passes 4/4 tests. Click "Export JSON". Download complete verification bundle. | *"Finally, pytest confirms zero regressions. With one click, developers export a verified SHA-256 hashed audit bundle and markdown report. VulnTrace: from alert to proven fix."* |
+| **0:00 - 0:30** | **The Problem** | Show SCA alert board listing PyYAML advisories across Cookiecutter and Cloud Config repositories. | *"Every developer knows the pain of SCA alert fatigue. You get dozens of critical alerts, but which ones are actually reachable? Today, we introduce VulnTrace."* |
+| **0:30 - 1:00** | **Reachability (`CASE-RW-03`)** | Inspect Cookiecutter repository. Trigger AST Reachability Analyzer. Call-graph confirms uncalled sink: `UNREACHABLE_FALSE_POSITIVE`. | *"VulnTrace maps the full AST call-graph from entrypoints. Cookiecutter requires PyYAML, but only calls safe_load. VulnTrace instantly suppresses this false positive."* |
+| **1:00 - 1:45** | **Reproduction RED (`CASE-RW-04`)** | Select Cloud Config microservice. Trigger Defensive Verification under Tier 1 container. Sentinel marker created on disk; RED state Exit 0 confirmed. | *"On a genuinely vulnerable service, VulnTrace synthesizes a target-bound harness and detonates it in an isolated container. Sentinel created on disk: RED state confirmed."* |
+| **1:45 - 2:20** | **Nemotron Patch** | Remediation card displays NVIDIA Nemotron 3 Ultra surgical diff. Patch Delta inspector verifies 2 lines changed across 1 file. | *"Next, NVIDIA Nemotron 3 Ultra synthesizes a surgical 2-line codemod. The AST validator parses the syntax before anything touches disk. Minimality criterion met."* |
+| **2:20 - 2:45** | **Differential Proof GREEN** | Differential verification re-runs identical harness. Parent Trust audit verifies sentinel absent on disk and dedicated Exit 42. | *"VulnTrace re-runs the identical harness against the patched code. The parent runner verifies Exit 42 and clean disk. Zero trust in child claims."* |
+| **2:45 - 3:00** | **Regressions & Export** | Native pytest regression suite passes 4 of 4 tests. Export verified SHA-256 hashed audit bundle and markdown report. | *"Finally, pytest confirms zero regressions. With one click, developers export a verified SHA-256 hashed audit bundle and markdown report. VulnTrace: from alert to proven fix."* |
 
 ---
 
@@ -265,19 +278,44 @@ Open your browser to:
 **`http://127.0.0.1:8000`**
 
 ### 4. Run Test Suite
+
+VulnTrace structures testing into four distinct execution modes based on test markers and platform capabilities:
+
+#### A. Fast Deterministic Offline Suite (Zero Containers, Zero Live Network)
+Executes all offline unit tests, AST call-graph reachability solvers, synthesis validators, verifier oracles, and adversarial fixture classification/containment checks. Requires only the standard Python virtual environment:
+```bash
+pytest -v -m "not container and not live_network" tests/
+```
+
+#### B. Live Container Isolation Suite (Tier 1 Rootless Sandbox)
+Executes rootless container isolation tests validating kernel network denial (`--network none`), read-only root filesystem (`--read-only`), ephemeral tmpfs scratch (`/tmp`), unprivileged user execution (`--user 1000:1000`), Linux capability dropping (`--cap-drop ALL`), and cgroup resource limits.  
+*Requirements:* Linux or WSL2 with rootless Podman and pre-baked `vulntrace-sandbox-base:latest` OCI image:
+```bash
+pytest -v -m "container" tests/
+```
+
+#### C. Live Network Integration Suite (Threat Intelligence & Advisory APIs)
+Executes live integration tests against external services (OSV.dev advisory lookups, Tavily Search API, and Nebius Token Factory).  
+*Requirements:* Outbound internet connectivity and active credentials in `.env` (`TAVILY_API_KEY`, `NEBIUS_API_KEY`):
+```bash
+pytest -v -m "live_network" tests/
+```
+
+#### D. Complete Test Suite (All Modes Combined)
+Executes all repository tests across offline, container, and live-network categories:
 ```bash
 pytest -v tests/
 ```
-All 108 test cases should pass cleanly.
+*(Note: Running `pytest -v tests/` without container prerequisites or active API keys will skip or fail those specific integration tests. Only the tests marked for the host's active capabilities will execute).*
 
 ---
 
 ## 10. Disclosures & Formal Limitations
 
-1. **Isolation Tiers & Safety Boundaries:** VulnTrace implements a tiered execution architecture detailed in [`docs/SAFETY.md`](docs/SAFETY.md):
-   - **Tier 1 (Rootless OCI Container):** The default execution tier for all real-world and non-curated repositories. Provides kernel-enforced network denial (`--network none`), read-only root filesystem (`--read-only`), unprivileged non-root identity (`--user 1000:1000`), dropped Linux capabilities (`--cap-drop ALL`), tmpfs scratch (`/tmp`), and cgroup resource limits (512MB RAM, 128 PIDs, 1.0 CPU).
-   - **Tier 0 (`LOCAL_SUBPROCESS_FALLBACK`):** Local developer execution for curated test fixtures only. **Tier 0 does not provide operating system isolation, user separation, or container virtualization.** It executes as the ambient host user and strictly refuses non-curated repository inputs unless explicitly overridden with `--unsafe-local`.
-2. **ConTree Cloud Sandboxing:** ConTree API returned `PERMISSION_DENIED (HTTP 403)` on `/sandboxes`. VulnTrace operates using local execution backends (Tier 1 rootless container or Tier 0 local fallback). No cloud responses are simulated or falsified.
+1. **Isolation Tiers & Safety Boundaries:** VulnTrace implements a strictly tiered execution architecture detailed in [`docs/SAFETY.md`](docs/SAFETY.md):
+   - **Tier 1 (Rootless OCI Container):** The mandatory default execution tier for all real-world and non-curated repositories. Provides kernel-enforced network denial (`--network none`), read-only root filesystem (`--read-only`), unprivileged non-root identity (`--user 1000:1000`), dropped Linux capabilities (`--cap-drop ALL`), tmpfs scratch (`/tmp`), and cgroup resource limits (512MB RAM, 128 PIDs, 1.0 CPU).
+   - **Tier 0 (`LOCAL_SUBPROCESS_FALLBACK`):** Local developer execution strictly restricted to approved canonical fixtures registered in `TrustedFixtureRegistry`. **Tier 0 does not provide operating system isolation, user separation, or container virtualization.** It executes as the ambient host user and strictly refuses non-curated repository inputs unconditionally. No unsafe-local override (`--unsafe-local`, `unsafe_local=True`, or `VULNTRACE_UNSAFE_LOCAL=1`) authorizes Tier 0 execution of non-curated repositories.
+2. **ConTree Cloud Sandboxing:** ConTree API returned `PERMISSION_DENIED (HTTP 403)` on `/sandboxes` during initial integration testing (last verified 2026-10-02). VulnTrace operates using verified local containment backends (Tier 1 rootless container for non-curated code, Tier 0 strictly for approved canonical fixtures). No cloud responses are simulated or falsified.
 3. **Static AST Reachability Scope:** The AST analyzer resolves static direct imports and aliased calls. It does not resolve dynamic runtime reflection (`getattr`), dynamic imports (`importlib`), or monkey-patching.
 
 ---

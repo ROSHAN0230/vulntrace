@@ -85,7 +85,7 @@ Tier 0 (`LocalSubprocessBackend`) executes harnesses directly on the host operat
 
 1. **Unconditional Refusal of Non-Curated Input:**
    - Tier 0 explicitly inspects repository paths (`_is_curated_fixture()`).
-   - Any repository that is not a known curated developer fixture (such as `tests/fixtures/sample_repo` or `tests/fixtures/deserialization/`) is **strictly and unconditionally refused**, raising `PermissionError`.
+   - Any repository that is not an approved canonical fixture registered in `TrustedFixtureRegistry` (such as `tests/fixtures/sample_repo`, `tests/fixtures/deserialization/yaml_vulnerable`, etc.) is **strictly and unconditionally refused**, raising `PermissionError`.
 2. **Prohibition of Unsafe Local Overrides:**
    - Non-curated or untrusted repositories must never execute using Tier 0, regardless of `unsafe_local=True`, `--unsafe-local`, or `VULNTRACE_UNSAFE_LOCAL=1`.
    - Tier 1 (`ContainerExecutionBackend`) is mandatory for all non-curated or external repositories. If Tier 1 is unavailable, execution fails closed with `PermissionError`.
@@ -93,8 +93,8 @@ Tier 0 (`LocalSubprocessBackend`) executes harnesses directly on the host operat
    - Tier 0 attestation explicitly brands runtime engines as `(DEGRADED_TIER_0)`.
    - Documentation and UI disclose: "Process executes under ambient host OS user identity without OS user separation. Network isolation is cooperative."
 4. **Benchmark Testing Context (`CASE-RW-01` and `CASE-RW-04`):**
-   - Real-world and external repository benchmarks (including `CASE-RW-01` Flasgger and `CASE-RW-04` Cloud Config Service) execute exclusively under **Tier 1** (`OCI_CONTAINER_ISOLATED`) rootless container isolation.
-   - Tier 0 execution is never permitted for external benchmarks, preserving host boundary guarantees.
+   - Under current Option A policy, real-world and external repository benchmarks (including `CASE-RW-01` Flasgger and `CASE-RW-04` Cloud Config Service) execute exclusively under **Tier 1** (`OCI_CONTAINER_ISOLATED`) rootless container isolation.
+   - Tier 0 execution is never permitted for external benchmarks, preserving host boundary guarantees. (Note: The historical benchmark run on commit `0aa3e1e` previously evaluated `CASE-RW-01` under Tier 0 with `--unsafe-local` for host virtualenv compatibility testing; that execution path is now strictly prohibited under Option A, and Tier 1 re-benchmarking remains pending).
 
 ---
 
