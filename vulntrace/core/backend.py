@@ -5,13 +5,23 @@ from execution runtime substrate (Subprocess, Container, WSL2, MicroVM).
 """
 
 import os
+import stat
 import tempfile
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Callable, Set, Union, Tuple
-from pydantic import BaseModel, Field
+try:
+    from pydantic import BaseModel, Field
+except ImportError:
+    class BaseModel:  # type: ignore[no-redef]
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    def Field(default_factory=None, **kwargs):  # type: ignore[no-redef]
+        return default_factory() if default_factory else kwargs.get("default", None)
 
 # Canonical project root used as trust anchor for application-controlled fixtures
 PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent.parent
@@ -68,15 +78,38 @@ def _is_path_within_root(target: Path, root: Path) -> bool:
 
 
 def _is_symlink_or_junction(p: Path) -> bool:
-    """Checks whether a path is a symbolic link, NTFS junction, or reparse point."""
+    """
+    Checks whether a path is a symbolic link, NTFS junction, or reparse point.
+
+    On Windows (os.name == 'nt'), preserves standard-library checks (Path.is_junction
+    on Python 3.12+, os.path.isjunction, p.is_symlink, os.path.islink) and includes
+    an os.lstat() fallback for Python 3.11 compatibility.
+
+    Rejecting all reparse points (stat.FILE_ATTRIBUTE_REPARSE_POINT or non-zero
+    st_reparse_tag) is an intentional conservative policy for trusted fixture paths.
+    If path metadata cannot be inspected safely, fails closed by returning True.
+    """
     try:
+        # Standard library checks available on Python 3.12+ and POSIX
         if p.is_symlink():
             return True
         if hasattr(p, "is_junction") and p.is_junction():
             return True
+        if hasattr(os.path, "isjunction") and os.path.isjunction(str(p)):
+            return True
         if os.path.islink(str(p)):
             return True
+
+        # Windows reparse point fallback for Python 3.11 and custom mount points
+        if os.name == "nt":
+            st = os.lstat(str(p))
+            if hasattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT") and hasattr(st, "st_file_attributes"):
+                if st.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                    return True
+            if hasattr(st, "st_reparse_tag") and st.st_reparse_tag != 0:
+                return True
     except (OSError, ValueError):
+        # Fail closed: treat inaccessible, broken, or ambiguous paths as unsafe
         return True
     return False
 

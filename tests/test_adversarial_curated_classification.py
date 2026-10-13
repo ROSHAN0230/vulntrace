@@ -13,6 +13,7 @@ Verifies that:
 8. TrustedFixtureRegistry dynamic registration lifecycle functions securely.
 """
 
+import os
 import sys
 import subprocess
 from pathlib import Path
@@ -142,10 +143,7 @@ class TestSymlinkAndJunctionAliasResistance:
         external_dir.mkdir()
         link_to_curated = external_dir / "aliased_curated"
 
-        try:
-            create_directory_link(link_to_curated, BENCHMARK_DIR)
-        except Exception as e:
-            pytest.skip(f"Junction/symlink creation unavailable in environment: {e}")
+        create_directory_link(link_to_curated, BENCHMARK_DIR)
 
         # The input path originates outside approved fixture roots
         assert is_curated_fixture(link_to_curated) is False
@@ -157,10 +155,7 @@ class TestSymlinkAndJunctionAliasResistance:
         external_dir.mkdir()
         link_to_curated = external_dir / "aliased_curated"
 
-        try:
-            create_directory_link(link_to_curated, BENCHMARK_DIR)
-        except Exception as e:
-            pytest.skip(f"Junction/symlink creation unavailable: {e}")
+        create_directory_link(link_to_curated, BENCHMARK_DIR)
 
         backend = LocalSubprocessBackend(unsafe_local=False)
         with pytest.raises(PermissionError) as exc_info:
@@ -172,10 +167,7 @@ class TestSymlinkAndJunctionAliasResistance:
         external_dir.mkdir()
         link_to_curated = external_dir / "aliased_curated"
 
-        try:
-            create_directory_link(link_to_curated, BENCHMARK_DIR)
-        except Exception as e:
-            pytest.skip(f"Junction/symlink creation unavailable: {e}")
+        create_directory_link(link_to_curated, BENCHMARK_DIR)
 
         with pytest.raises(PermissionError) as exc_info:
             BackendFactory.resolve_best_available_backend(
@@ -192,10 +184,7 @@ class TestSymlinkAndJunctionAliasResistance:
         external_dir.mkdir()
         link_to_curated = external_dir / "aliased_curated"
 
-        try:
-            create_directory_link(link_to_curated, BENCHMARK_DIR)
-        except Exception as e:
-            pytest.skip(f"Junction/symlink creation unavailable: {e}")
+        create_directory_link(link_to_curated, BENCHMARK_DIR)
 
         req = VerificationPipelineRequest(
             repo_path=str(link_to_curated),
@@ -216,10 +205,7 @@ class TestSymlinkAndJunctionAliasResistance:
         (untrusted_code / "exploit.py").write_text("# payload\n", encoding="utf-8")
 
         fake_benchmark = tmp_path / "benchmarks_contextual_reasoning"
-        try:
-            create_directory_link(fake_benchmark, untrusted_code)
-        except Exception as e:
-            pytest.skip(f"Junction/symlink creation unavailable: {e}")
+        create_directory_link(fake_benchmark, untrusted_code)
 
         assert is_curated_fixture(fake_benchmark) is False
 
@@ -623,6 +609,7 @@ class TestAncestorLinkRedirectionResistance:
         """
         Tests that an NTFS junction at the top-level fixture directory (e.g., benchmarks)
         redirected to an unapproved directory within the project tree is rejected.
+        On Windows, unexpected junction creation failure fails the test.
         """
         if sys.platform != "win32":
             pytest.skip("Platform-blocked: NTFS junction requires Windows platform")
@@ -634,14 +621,11 @@ class TestAncestorLinkRedirectionResistance:
         (attacker_dir / "contextual_reasoning").mkdir(parents=True)
 
         benchmarks_junction = proj / "benchmarks"
-        try:
-            subprocess.run(
-                ["cmd", "/c", "mklink", "/J", str(benchmarks_junction), str(attacker_dir)],
-                check=True,
-                capture_output=True,
-            )
-        except (subprocess.CalledProcessError, OSError) as e:
-            pytest.skip(f"Platform-blocked: NTFS junction creation failed: {e}")
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(benchmarks_junction), str(attacker_dir)],
+            check=True,
+            capture_output=True,
+        )
 
         with patch("vulntrace.core.backend.PROJECT_ROOT", proj):
             canonical = TrustedFixtureRegistry.get_canonical_fixtures()
@@ -674,6 +658,7 @@ class TestAncestorLinkRedirectionResistance:
         """
         Tests that an NTFS junction at an intermediate ancestor directory (e.g., tests/fixtures)
         redirected to an unapproved directory is rejected.
+        On Windows, unexpected junction creation failure fails the test.
         """
         if sys.platform != "win32":
             pytest.skip("Platform-blocked: NTFS junction requires Windows platform")
@@ -686,14 +671,11 @@ class TestAncestorLinkRedirectionResistance:
         (attacker_dir / "sample_repo").mkdir(parents=True)
 
         fixtures_junction = proj / "tests" / "fixtures"
-        try:
-            subprocess.run(
-                ["cmd", "/c", "mklink", "/J", str(fixtures_junction), str(attacker_dir)],
-                check=True,
-                capture_output=True,
-            )
-        except (subprocess.CalledProcessError, OSError) as e:
-            pytest.skip(f"Platform-blocked: NTFS junction creation failed: {e}")
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(fixtures_junction), str(attacker_dir)],
+            check=True,
+            capture_output=True,
+        )
 
         with patch("vulntrace.core.backend.PROJECT_ROOT", proj):
             canonical = TrustedFixtureRegistry.get_canonical_fixtures()
@@ -704,7 +686,7 @@ class TestAncestorLinkRedirectionResistance:
     def test_real_ancestor_symlink_rejection(self, tmp_path):
         """
         Tests that an ancestor directory symlink redirected to an unapproved directory
-        is rejected. On Windows, skips if unprivileged symlink creation is blocked.
+        is rejected. On Windows, skips ONLY when explicitly denied by OS permission (WinError 1314).
         """
         proj = tmp_path / "proj"
         proj.mkdir()
@@ -716,7 +698,9 @@ class TestAncestorLinkRedirectionResistance:
         try:
             benchmarks_link.symlink_to(attacker_dir, target_is_directory=True)
         except OSError as e:
-            pytest.skip(f"Platform-blocked: directory symlink creation requires elevated privileges: {e}")
+            if getattr(e, "winerror", None) == 1314:
+                pytest.skip("Platform-blocked: directory symlink creation requires elevated privileges (WinError 1314)")
+            raise
 
         with patch("vulntrace.core.backend.PROJECT_ROOT", proj):
             canonical = TrustedFixtureRegistry.get_canonical_fixtures()
@@ -743,6 +727,7 @@ class TestAncestorLinkRedirectionResistance:
         """
         Verifies that even if a caller passes the pre-resolved target path (bypassing
         the junction in the argument string), the unapproved target is rejected.
+        On Windows, unexpected junction creation failure fails the test.
         """
         if sys.platform != "win32":
             pytest.skip("Platform-blocked: NTFS junction requires Windows platform")
@@ -755,14 +740,11 @@ class TestAncestorLinkRedirectionResistance:
         target_fixture.mkdir(parents=True)
 
         benchmarks_junction = proj / "benchmarks"
-        try:
-            subprocess.run(
-                ["cmd", "/c", "mklink", "/J", str(benchmarks_junction), str(attacker_dir)],
-                check=True,
-                capture_output=True,
-            )
-        except (subprocess.CalledProcessError, OSError) as e:
-            pytest.skip(f"Platform-blocked: NTFS junction creation failed: {e}")
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(benchmarks_junction), str(attacker_dir)],
+            check=True,
+            capture_output=True,
+        )
 
         with patch("vulntrace.core.backend.PROJECT_ROOT", proj):
             # Target path directly passed
@@ -779,5 +761,159 @@ class TestAncestorLinkRedirectionResistance:
             backend = LocalSubprocessBackend(unsafe_local=False)
             with pytest.raises(PermissionError):
                 asyncio.run(backend.initialize_workspace(target_fixture))
+
+    def test_simulated_python311_fallback_junction_detection(self, tmp_path):
+        """
+        Simulates a Python 3.11 runtime lacking Path.is_junction and os.path.isjunction APIs,
+        proving that the Windows os.lstat fallback detects real NTFS junctions, accepts normal
+        directories, and fails closed on metadata errors.
+        """
+        if sys.platform != "win32":
+            pytest.skip("Platform-blocked: NTFS junction requires Windows platform")
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        attacker_dir = proj / "attacker_dir"
+        attacker_dir.mkdir()
+        (attacker_dir / "contextual_reasoning").mkdir(parents=True)
+
+        normal_dir = proj / "normal_dir"
+        normal_dir.mkdir()
+
+        benchmarks_junction = proj / "benchmarks"
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(benchmarks_junction), str(attacker_dir)],
+            check=True,
+            capture_output=True,
+        )
+
+        import vulntrace.core.backend as backend_module
+
+        # Temporarily simulate absence of Python 3.12+ is_junction APIs
+        orig_path_junction = getattr(Path, "is_junction", None)
+        orig_os_junction = getattr(os.path, "isjunction", None)
+
+        try:
+            if hasattr(Path, "is_junction"):
+                delattr(Path, "is_junction")
+            if hasattr(os.path, "isjunction"):
+                delattr(os.path, "isjunction")
+
+            # Verify that hasattr is now False in this scope
+            assert not hasattr(benchmarks_junction, "is_junction")
+            assert not hasattr(os.path, "isjunction")
+
+            # 1. Fallback correctly detects the real junction via os.lstat
+            assert backend_module._is_symlink_or_junction(benchmarks_junction) is True
+
+            # 2. Normal non-reparse directory is accepted
+            assert backend_module._is_symlink_or_junction(normal_dir) is False
+
+            # 3. Non-existent / error-raising path fails closed
+            assert backend_module._is_symlink_or_junction(tmp_path / "nonexistent_err") is True
+
+            # 4. Canonical fixtures reject the ancestor junction under simulated 3.11
+            with patch("vulntrace.core.backend.PROJECT_ROOT", proj):
+                canonical = TrustedFixtureRegistry.get_canonical_fixtures()
+                assert len(canonical) == 0
+                assert is_curated_fixture(benchmarks_junction / "contextual_reasoning") is False
+                assert is_curated_fixture(attacker_dir / "contextual_reasoning") is False
+        finally:
+            if orig_path_junction is not None:
+                setattr(Path, "is_junction", orig_path_junction)
+            if orig_os_junction is not None:
+                setattr(os.path, "isjunction", orig_os_junction)
+
+    def test_real_windows_python311_subprocess_verification(self, tmp_path):
+        """
+        Executes out-of-process verification using real Python 3.11 (py -3.11) on Windows
+        against an actual NTFS junction, proving detection, canonical rejection, normal
+        directory acceptance, and fail-closed behavior on metadata errors.
+        """
+        if sys.platform != "win32":
+            pytest.skip("Platform-blocked: requires Windows platform")
+
+        # Verify py -3.11 is installed and available
+        try:
+            subprocess.run(
+                ["py", "-3.11", "--version"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError) as e:
+            pytest.skip(f"Platform-blocked: py -3.11 interpreter unavailable: {e}")
+
+        # Construct verification script for out-of-process execution
+        test_script = f"""
+import sys
+import types
+import os
+import pathlib
+import subprocess
+
+# Stub pydantic if missing in bare Python 3.11 interpreter
+if "pydantic" not in sys.modules:
+    pyd = types.ModuleType("pydantic")
+    pyd.BaseModel = type("BaseModel", (), {{}})
+    pyd.Field = lambda default_factory=None, **kwargs: (default_factory() if default_factory else kwargs.get("default", None))
+    sys.modules["pydantic"] = pyd
+
+sys.path.insert(0, r"{PROJECT_ROOT}")
+import vulntrace.core.backend as backend
+
+tmp_base = pathlib.Path(r"{tmp_path}")
+proj = tmp_base / "proj_py311"
+proj.mkdir()
+attacker_dir = proj / "attacker_dir"
+attacker_dir.mkdir()
+(attacker_dir / "contextual_reasoning").mkdir(parents=True)
+
+normal_dir = proj / "normal_dir"
+normal_dir.mkdir()
+
+benchmarks_junction = proj / "benchmarks"
+subprocess.run(
+    ["cmd", "/c", "mklink", "/J", str(benchmarks_junction), str(attacker_dir)],
+    check=True,
+    capture_output=True,
+)
+
+# 1. Real NTFS junction must be detected under Python 3.11
+assert backend._is_symlink_or_junction(benchmarks_junction) is True, "Junction was not detected under Python 3.11!"
+
+# 2. Normal directory must NOT be detected as symlink or junction
+assert backend._is_symlink_or_junction(normal_dir) is False, "Normal directory falsely flagged under Python 3.11!"
+
+# 3. Path metadata error / non-existent path must fail closed
+assert backend._is_symlink_or_junction(tmp_base / "nonexistent_err_path") is True, "Metadata error did not fail closed!"
+
+# 4. Canonical fixtures must reject ancestor junction
+backend.PROJECT_ROOT = proj
+canonical = backend.TrustedFixtureRegistry.get_canonical_fixtures()
+assert len(canonical) == 0, f"Expected 0 canonical fixtures with junction ancestor, got {{len(canonical)}}"
+assert backend.is_curated_fixture(benchmarks_junction / "contextual_reasoning") is False
+assert backend.is_curated_fixture(attacker_dir / "contextual_reasoning") is False
+
+# 5. Positive control: legitimate non-redirected fixture accepted
+proj_ok = tmp_base / "proj_ok_py311"
+proj_ok.mkdir()
+legit_fixture = proj_ok / "benchmarks" / "contextual_reasoning"
+legit_fixture.mkdir(parents=True)
+backend.PROJECT_ROOT = proj_ok
+canonical_ok = backend.TrustedFixtureRegistry.get_canonical_fixtures()
+assert legit_fixture.resolve() in canonical_ok
+assert backend.is_curated_fixture(legit_fixture) is True
+
+print("PYTHON_311_VERIFICATION_SUCCESS")
+"""
+
+        proc = subprocess.run(
+            ["py", "-3.11", "-c", test_script],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert "PYTHON_311_VERIFICATION_SUCCESS" in proc.stdout
 
 
