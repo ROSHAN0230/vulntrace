@@ -905,6 +905,22 @@ canonical_ok = backend.TrustedFixtureRegistry.get_canonical_fixtures()
 assert legit_fixture.resolve() in canonical_ok
 assert backend.is_curated_fixture(legit_fixture) is True
 
+# 6. Missing metadata fields fail closed under Python 3.11
+import unittest.mock
+class MockStatNoTag:
+    st_mode = 0o040777
+    st_file_attributes = 0x10
+
+with unittest.mock.patch("vulntrace.core.backend.os.lstat", return_value=MockStatNoTag()):
+    assert backend._is_symlink_or_junction(normal_dir) is True, "Missing st_reparse_tag did not fail closed under Python 3.11!"
+
+class MockStatNoAttrs:
+    st_mode = 0o040777
+    st_reparse_tag = 0
+
+with unittest.mock.patch("vulntrace.core.backend.os.lstat", return_value=MockStatNoAttrs()):
+    assert backend._is_symlink_or_junction(normal_dir) is True, "Missing st_file_attributes did not fail closed under Python 3.11!"
+
 print("PYTHON_311_VERIFICATION_SUCCESS")
 """
 
@@ -915,5 +931,107 @@ print("PYTHON_311_VERIFICATION_SUCCESS")
             check=True,
         )
         assert "PYTHON_311_VERIFICATION_SUCCESS" in proc.stdout
+
+    def test_windows_reparse_missing_constant_fails_closed(self, tmp_path):
+        """
+        Tests that if stat.FILE_ATTRIBUTE_REPARSE_POINT is unavailable on Windows,
+        _is_symlink_or_junction() fails closed by returning True (unsafe).
+        """
+        if sys.platform != "win32":
+            pytest.skip("Platform-blocked: requires Windows platform")
+
+        normal_dir = tmp_path / "normal_dir"
+        normal_dir.mkdir()
+
+        import stat
+        import vulntrace.core.backend as backend_module
+
+        orig_const = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", None)
+        try:
+            if hasattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT"):
+                delattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT")
+            assert not hasattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT")
+
+            # Must fail closed (return True) even on an authentic normal directory
+            assert backend_module._is_symlink_or_junction(normal_dir) is True
+        finally:
+            if orig_const is not None:
+                setattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", orig_const)
+
+    def test_windows_reparse_missing_st_file_attributes_fails_closed(self, tmp_path):
+        """
+        Tests that if the stat struct is missing st_file_attributes on Windows,
+        _is_symlink_or_junction() fails closed by returning True (unsafe).
+        """
+        if sys.platform != "win32":
+            pytest.skip("Platform-blocked: requires Windows platform")
+
+        normal_dir = tmp_path / "normal_dir"
+        normal_dir.mkdir()
+
+        import vulntrace.core.backend as backend_module
+
+        # Mock os.lstat to return a struct lacking st_file_attributes
+        class MockStatWithoutFileAttributes:
+            st_mode = 0o040777
+            st_reparse_tag = 0
+
+        with patch("vulntrace.core.backend.os.lstat", return_value=MockStatWithoutFileAttributes()):
+            # Must fail closed (return True)
+            assert backend_module._is_symlink_or_junction(normal_dir) is True
+
+    def test_windows_reparse_missing_st_reparse_tag_fails_closed(self, tmp_path):
+        """
+        Tests that if the stat struct is missing st_reparse_tag on Windows,
+        _is_symlink_or_junction() fails closed by returning True (unsafe).
+        """
+        if sys.platform != "win32":
+            pytest.skip("Platform-blocked: requires Windows platform")
+
+        normal_dir = tmp_path / "normal_dir"
+        normal_dir.mkdir()
+
+        import vulntrace.core.backend as backend_module
+
+        # Mock os.lstat to return a struct lacking st_reparse_tag
+        class MockStatWithoutReparseTag:
+            st_mode = 0o040777
+            st_file_attributes = 0x10  # FILE_ATTRIBUTE_DIRECTORY
+
+        with patch("vulntrace.core.backend.os.lstat", return_value=MockStatWithoutReparseTag()):
+            # Must fail closed (return True)
+            assert backend_module._is_symlink_or_junction(normal_dir) is True
+
+
+class TestDependencyIntegrityEnforcement:
+    """Proves that missing required project dependencies (e.g. Pydantic) fail explicitly."""
+
+    def test_backend_import_strictly_fails_without_pydantic_in_fresh_subprocess(self):
+        """
+        Tests missing-Pydantic behavior in a fresh Python subprocess without relying on
+        cached module state or importlib.reload. Confirms that importing vulntrace.core.backend
+        fails explicitly with an ImportError/ModuleNotFoundError rather than silently using
+        fallback classes.
+        """
+        script = f"""
+import sys
+# Block pydantic from importing by setting it to None in sys.modules
+sys.modules['pydantic'] = None
+sys.path.insert(0, r'{PROJECT_ROOT}')
+
+try:
+    import vulntrace.core.backend
+    print('UNEXPECTED_IMPORT_SUCCESS')
+except (ImportError, ModuleNotFoundError) as e:
+    print(f'EXPECTED_IMPORT_FAILURE: {{e}}')
+"""
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert "EXPECTED_IMPORT_FAILURE" in proc.stdout
+        assert "UNEXPECTED_IMPORT_SUCCESS" not in proc.stdout
 
 

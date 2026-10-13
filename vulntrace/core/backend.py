@@ -12,16 +12,7 @@ from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Callable, Set, Union, Tuple
-try:
-    from pydantic import BaseModel, Field
-except ImportError:
-    class BaseModel:  # type: ignore[no-redef]
-        def __init__(self, **kwargs):
-            for k, v in kwargs.items():
-                setattr(self, k, v)
-
-    def Field(default_factory=None, **kwargs):  # type: ignore[no-redef]
-        return default_factory() if default_factory else kwargs.get("default", None)
+from pydantic import BaseModel, Field
 
 # Canonical project root used as trust anchor for application-controlled fixtures
 PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent.parent
@@ -102,13 +93,23 @@ def _is_symlink_or_junction(p: Path) -> bool:
 
         # Windows reparse point fallback for Python 3.11 and custom mount points
         if os.name == "nt":
-            st = os.lstat(str(p))
-            if hasattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT") and hasattr(st, "st_file_attributes"):
-                if st.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
-                    return True
-            if hasattr(st, "st_reparse_tag") and st.st_reparse_tag != 0:
+            # If the Windows reparse attribute constant is unavailable, fail closed
+            if not hasattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT"):
                 return True
-    except (OSError, ValueError):
+
+            st = os.lstat(str(p))
+
+            # If required metadata fields on the stat struct are unavailable, fail closed
+            if not hasattr(st, "st_file_attributes"):
+                return True
+            if not hasattr(st, "st_reparse_tag"):
+                return True
+
+            if st.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                return True
+            if st.st_reparse_tag != 0:
+                return True
+    except (OSError, ValueError, AttributeError):
         # Fail closed: treat inaccessible, broken, or ambiguous paths as unsafe
         return True
     return False
