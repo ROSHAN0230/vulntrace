@@ -13,6 +13,9 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List, Callable, Set, Union, Tuple
 from pydantic import BaseModel, Field
 
+# Canonical project root used as trust anchor for application-controlled fixtures
+PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent.parent
+
 
 class IsolationTier(str, Enum):
     LOCAL_SUBPROCESS_FALLBACK = "LOCAL_SUBPROCESS_FALLBACK"
@@ -134,7 +137,7 @@ class TrustedFixtureRegistry:
         if p_res == Path(p_res.anchor) or p_res == p_res.parent:
             return True
 
-        project_root = Path(__file__).resolve().parent.parent.parent
+        project_root = PROJECT_ROOT
         # Disallow project root or anything above it
         if p_res == project_root or _is_path_within_root(project_root, p_res):
             return True
@@ -194,7 +197,7 @@ class TrustedFixtureRegistry:
         except (OSError, ValueError):
             return None
 
-        project_root = Path(__file__).resolve().parent.parent.parent
+        project_root = PROJECT_ROOT
 
         # Amendment A.1: Reject if EITHER the original absolute path OR its resolved destination lies within PROJECT_ROOT
         if _is_path_within_root(unresolved_abs, project_root) or _is_path_within_root(resolved_path, project_root):
@@ -210,31 +213,42 @@ class TrustedFixtureRegistry:
     def get_canonical_fixtures(cls) -> Set[Path]:
         """
         Returns the canonical resolved absolute paths of application-controlled fixtures.
-        Enforces Amendment B:
+        Enforces Amendment B and ancestor-link integrity:
         - Originates from exact relative allowlist (no absolute paths, no .. traversal)
-        - Exists and is a directory
-        - Resolves to intended location inside canonical project root
-        - Cannot be redirected through symlink or NTFS junction
+        - Sequentially inspects every path component from the trusted project root
+          to each canonical fixture, rejecting symlinks, NTFS junctions, and unsafe redirections
+          at any intermediate level
+        - Verifies canonical containment after component validation
+        - Cannot be redirected through an ancestor or leaf link
         """
-        project_root = Path(__file__).resolve().parent.parent.parent
+        project_root = PROJECT_ROOT
         canonical: Set[Path] = set()
         for rel in cls.CANONICAL_FIXTURE_RELPATHS:
             rel_path = Path(rel)
             if rel_path.is_absolute() or ".." in rel_path.parts:
                 continue
 
-            expected_path = project_root / rel_path
-            try:
-                if not expected_path.exists() or not expected_path.is_dir():
-                    continue
-                # Cannot be redirected through a symlink or junction
-                if _is_symlink_or_junction(expected_path):
-                    continue
+            # Sequentially validate every component from project_root to leaf directory
+            curr = project_root
+            has_unsafe_component = False
+            for part in rel_path.parts:
+                curr = curr / part
+                try:
+                    if not curr.exists() or not curr.is_dir():
+                        has_unsafe_component = True
+                        break
+                    if _is_symlink_or_junction(curr):
+                        has_unsafe_component = True
+                        break
+                except (OSError, ValueError):
+                    has_unsafe_component = True
+                    break
 
-                resolved_path = expected_path.resolve()
-                intended_resolved = (project_root.resolve() / rel_path).resolve()
-                if resolved_path != intended_resolved:
-                    continue
+            if has_unsafe_component:
+                continue
+
+            try:
+                resolved_path = curr.resolve()
 
                 # Must resolve inside project_root
                 if not _is_path_within_root(resolved_path, project_root):
@@ -331,7 +345,7 @@ def is_curated_fixture(repo_path: Any) -> bool:
     except (OSError, ValueError):
         return False
 
-    project_root = Path(__file__).resolve().parent.parent.parent
+    project_root = PROJECT_ROOT
     real_world_eval_root = (project_root / "real_world_eval").resolve()
 
     try:

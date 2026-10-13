@@ -609,3 +609,175 @@ class TestDynamicRegistryAuthorityAmendments:
         assert is_curated_fixture(ext_repo) is False
         assert is_curated_fixture(subpkg) is False
 
+
+class TestAncestorLinkRedirectionResistance:
+    """
+    Verifies that canonical fixture discovery and Tier 0 classification reject
+    fixtures whose parent or intermediate ancestor directories are redirected
+    via real NTFS junctions or symlinks.
+    Tests run in controlled temporary project trees using scoped monkeypatching
+    of PROJECT_ROOT, leaving actual repository fixtures completely untouched.
+    """
+
+    def test_real_ancestor_ntfs_junction_rejection(self, tmp_path):
+        """
+        Tests that an NTFS junction at the top-level fixture directory (e.g., benchmarks)
+        redirected to an unapproved directory within the project tree is rejected.
+        """
+        if sys.platform != "win32":
+            pytest.skip("Platform-blocked: NTFS junction requires Windows platform")
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        attacker_dir = proj / "attacker_dir"
+        attacker_dir.mkdir()
+        (attacker_dir / "contextual_reasoning").mkdir(parents=True)
+
+        benchmarks_junction = proj / "benchmarks"
+        try:
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(benchmarks_junction), str(attacker_dir)],
+                check=True,
+                capture_output=True,
+            )
+        except (subprocess.CalledProcessError, OSError) as e:
+            pytest.skip(f"Platform-blocked: NTFS junction creation failed: {e}")
+
+        with patch("vulntrace.core.backend.PROJECT_ROOT", proj):
+            canonical = TrustedFixtureRegistry.get_canonical_fixtures()
+            # Redirected fixture must NOT be in canonical fixtures
+            assert (attacker_dir / "contextual_reasoning").resolve() not in canonical
+            assert (benchmarks_junction / "contextual_reasoning").resolve() not in canonical
+
+            # Tier 0 classification must refuse the redirected fixture via junction path
+            assert is_curated_fixture(benchmarks_junction / "contextual_reasoning") is False
+            # Tier 0 classification must also refuse the target directory directly
+            assert is_curated_fixture(attacker_dir / "contextual_reasoning") is False
+
+            # Production entry point: BackendFactory refuses Tier 0
+            with pytest.raises(PermissionError) as exc_info:
+                BackendFactory.resolve_best_available_backend(
+                    target_repo=benchmarks_junction / "contextual_reasoning",
+                    prefer_container=False,
+                    unsafe_local=False,
+                )
+            assert "requires Isolation Tier 1" in str(exc_info.value) or "requiring Isolation Tier 1" in str(exc_info.value)
+
+            # Production entry point: LocalSubprocessBackend refuses initialization
+            backend = LocalSubprocessBackend(unsafe_local=False)
+            import asyncio
+            with pytest.raises(PermissionError) as exc_info2:
+                asyncio.run(backend.initialize_workspace(benchmarks_junction / "contextual_reasoning"))
+            assert "refused non-curated repository" in str(exc_info2.value)
+
+    def test_real_intermediate_ancestor_ntfs_junction_rejection(self, tmp_path):
+        """
+        Tests that an NTFS junction at an intermediate ancestor directory (e.g., tests/fixtures)
+        redirected to an unapproved directory is rejected.
+        """
+        if sys.platform != "win32":
+            pytest.skip("Platform-blocked: NTFS junction requires Windows platform")
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "tests").mkdir()
+        attacker_dir = proj / "attacker_dir"
+        attacker_dir.mkdir()
+        (attacker_dir / "sample_repo").mkdir(parents=True)
+
+        fixtures_junction = proj / "tests" / "fixtures"
+        try:
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(fixtures_junction), str(attacker_dir)],
+                check=True,
+                capture_output=True,
+            )
+        except (subprocess.CalledProcessError, OSError) as e:
+            pytest.skip(f"Platform-blocked: NTFS junction creation failed: {e}")
+
+        with patch("vulntrace.core.backend.PROJECT_ROOT", proj):
+            canonical = TrustedFixtureRegistry.get_canonical_fixtures()
+            assert (attacker_dir / "sample_repo").resolve() not in canonical
+            assert is_curated_fixture(fixtures_junction / "sample_repo") is False
+            assert is_curated_fixture(attacker_dir / "sample_repo") is False
+
+    def test_real_ancestor_symlink_rejection(self, tmp_path):
+        """
+        Tests that an ancestor directory symlink redirected to an unapproved directory
+        is rejected. On Windows, skips if unprivileged symlink creation is blocked.
+        """
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        attacker_dir = proj / "attacker_dir"
+        attacker_dir.mkdir()
+        (attacker_dir / "contextual_reasoning").mkdir(parents=True)
+
+        benchmarks_link = proj / "benchmarks"
+        try:
+            benchmarks_link.symlink_to(attacker_dir, target_is_directory=True)
+        except OSError as e:
+            pytest.skip(f"Platform-blocked: directory symlink creation requires elevated privileges: {e}")
+
+        with patch("vulntrace.core.backend.PROJECT_ROOT", proj):
+            canonical = TrustedFixtureRegistry.get_canonical_fixtures()
+            assert (attacker_dir / "contextual_reasoning").resolve() not in canonical
+            assert is_curated_fixture(benchmarks_link / "contextual_reasoning") is False
+            assert is_curated_fixture(attacker_dir / "contextual_reasoning") is False
+
+    def test_real_non_redirected_control_fixture_accepted_in_temp_tree(self, tmp_path):
+        """
+        Verifies positive control: an authentic non-redirected canonical fixture inside
+        a temporary project tree is accepted by get_canonical_fixtures and classified as curated.
+        """
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        legit_dir = proj / "benchmarks" / "contextual_reasoning"
+        legit_dir.mkdir(parents=True)
+
+        with patch("vulntrace.core.backend.PROJECT_ROOT", proj):
+            canonical = TrustedFixtureRegistry.get_canonical_fixtures()
+            assert legit_dir.resolve() in canonical
+            assert is_curated_fixture(legit_dir) is True
+
+    def test_preresolved_redirected_path_rejected_by_backend_and_factory(self, tmp_path):
+        """
+        Verifies that even if a caller passes the pre-resolved target path (bypassing
+        the junction in the argument string), the unapproved target is rejected.
+        """
+        if sys.platform != "win32":
+            pytest.skip("Platform-blocked: NTFS junction requires Windows platform")
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        attacker_dir = proj / "attacker_dir"
+        attacker_dir.mkdir()
+        target_fixture = attacker_dir / "contextual_reasoning"
+        target_fixture.mkdir(parents=True)
+
+        benchmarks_junction = proj / "benchmarks"
+        try:
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(benchmarks_junction), str(attacker_dir)],
+                check=True,
+                capture_output=True,
+            )
+        except (subprocess.CalledProcessError, OSError) as e:
+            pytest.skip(f"Platform-blocked: NTFS junction creation failed: {e}")
+
+        with patch("vulntrace.core.backend.PROJECT_ROOT", proj):
+            # Target path directly passed
+            assert is_curated_fixture(target_fixture) is False
+
+            with pytest.raises(PermissionError):
+                BackendFactory.resolve_best_available_backend(
+                    target_repo=target_fixture,
+                    prefer_container=False,
+                    unsafe_local=False,
+                )
+
+            import asyncio
+            backend = LocalSubprocessBackend(unsafe_local=False)
+            with pytest.raises(PermissionError):
+                asyncio.run(backend.initialize_workspace(target_fixture))
+
+
