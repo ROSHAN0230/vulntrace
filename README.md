@@ -197,33 +197,51 @@ Tavily Search API queries live CVE intelligence, NVD/OSV advisories, and technic
 ConTree Cloud sandboxing was evaluated during initial cloud integration testing (last verified 2026-10-02), where the API returned `PERMISSION_DENIED (HTTP 403)` on `/sandboxes` because provided credentials lacked sandbox provisioning permissions. Rather than simulating or falsifying cloud execution, VulnTrace truthfully discloses this limitation. VulnTrace executes using verified local containment engines: Tier 1 rootless container isolation (`OCI_CONTAINER_ISOLATED`) is mandatory for all non-curated/untrusted code, while Tier 0 (`LOCAL_SUBPROCESS_FALLBACK`) is strictly restricted to approved canonical developer fixtures.
 
 ### Q9. What are VulnTrace's terminal states?
-VulnTrace enforces 7 mutually exclusive terminal verdicts:
-1. `GREEN_STATE_VERIFIED`: Vulnerability reproduced, patched, blocked, positive controls intact, and regression tests passed.
-2. `RED_STATE_PERSISTS`: Remediation failed to stop the exploit.
-3. `INCONCLUSIVE`: Pre-conditions or vulnerability signal could not be observed.
-4. `PATCH_REJECTED`: Patch failed AST syntax or semantic diff gates.
-5. `REGRESSION_FAILURE`: Security fixed, but unit tests broke.
-6. `VERIFICATION_REJECTED`: Forged child evidence or policy violation.
-7. `UNEXPECTED_FAILURE`: Missing runtime dependency or environment incompatibility.
+VulnTrace implements the 11 canonical terminal verdicts defined in [Technical Specification §3.2](docs/TECHNICAL_SPEC.md#32-canonical-verdict-taxonomy-exact-strings):
+1. `GREEN_STATE_VERIFIED`: RED reproduced (3/3), patch accepted by quality gates, GREEN verified (3/3), and baseline regression suite passes.
+2. `NO_STATIC_PATH_FOUND`: Static analysis found no reachable call path from entrypoints to the identified sink; lists potential static blind spots.
+3. `NOT_VULNERABLE_ALREADY_SAFE`: Target code does not exhibit the vulnerable pattern or is already remediated.
+4. `RED_NOT_REPRODUCED`: Vulnerable path appears reachable, but the dynamic harness could not observe the expected vulnerability indicator across execution repeats.
+5. `RED_STATE_PERSISTS`: Patch was applied, but the dynamic harness still successfully triggers the vulnerable behavior.
+6. `PATCH_REJECTED`: Patch failed one or more structural quality gates (syntax error, plan scope violation, denylist violation, or diff budget exceeded).
+7. `REGRESSION_FAILURE`: Security vulnerability was remediated, but tests that previously passed in the baseline suite now fail.
+8. `VERIFICATION_REJECTED`: Evidence integrity check failed (harness hash altered, canary telemetry malformed or contradictory, or environment policy violated).
+9. `ENV_BUILD_FAILED`: Target environment construction or dependency installation failed (distinct from internal tool exceptions).
+10. `UNVERIFIABLE`: The user requirement or vulnerability description could not be converted into a deterministic, failing acceptance test (or incomplete execution protocol).
+11. `UNEXPECTED_FAILURE`: Unhandled internal exception occurred or watchdog timeout tripped; accompanied by error traceback telemetry.
+
+> **Historical Observation Labels in Benchmark Records:**
+>
+> Raw empirical observations in historical benchmark records retain their original recorded values from early pipeline runs. Historical labels are not universal aliases for canonical verdicts:
+> - `UNREACHABLE_FALSE_POSITIVE` corresponds to `NO_STATIC_PATH_FOUND` when the recorded analysis establishes that the solver found no statically resolved path from entrypoints to the identified sink (`unreachable_dead_code`), while for `CASE-RW-03` (Cookiecutter) it corresponds to `NOT_VULNERABLE_ALREADY_SAFE` because AST analysis confirms the vulnerable sink pattern is completely absent and only `yaml.safe_load` is invoked.
+> - `NO_VULNERABILITIES_FOUND` corresponds to `NOT_VULNERABLE_ALREADY_SAFE` when static AST analysis proves the vulnerable symbol is absent or already migrated (`CASE-RW-02`).
+> - `INCONCLUSIVE` requires case-specific adjudication: for `inconclusive_guard`, an application pre-validation guard prevented exploit execution, canonically mapping to `RED_NOT_REPRODUCED`. For `CASE-RW-01`, while its historical raw behavioral observation recorded `INCONCLUSIVE` (exit code 10 non-reproduction, with M2 evidence attributing this to PyYAML 5.4.1 constructor error, unverified from raw run logs in this tranche), its canonical terminal adjudication under Spec §3.2 is `VERIFICATION_REJECTED` due to environment-policy violation (untrusted repository executed on host Tier 0 `LOCAL_SUBPROCESS_FALLBACK`, with `--unsafe-local` historically reported in project documentation but unverified from raw logs) and contradictory regression telemetry (`regression_passed: true` top-level vs `false` in repeat with 0 tests); this evidence-integrity rejection takes precedence over behavioral non-reproduction.
+> - Exactly 5 of 10 historical records carry the legacy single-pass `GREEN_STATE_VERIFIED` label (while all 10/10 records use `protocol_conformance: LEGACY_SINGLE_PASS`, 1/1 repeat). These reflect historical single-run outcomes and do not satisfy the canonical 3-repeat acceptance gate (0/10 cases are three-repeat verified).
 
 ---
 
-## 8. 3-Minute Demo Video Storyboard
+## 8. Representative End-to-End Workflows
 
-> **Storyboard Scope & Scenario Context:**  
-> The walkthrough below illustrates an end-to-end demonstration covering two distinct evaluation scenarios:  
-> 1. **Reachability False-Positive Suppression (`CASE-RW-03` Cookiecutter):** Suppressing uncalled dead-code alerts before detonation.  
-> 2. **Autonomous Verified Remediation Lifecycle (`CASE-RW-04` Cloud Config Service):** Synthesizing a reproduction harness, observing RED state Exit 0, generating a surgical 2-line Nemotron patch, verifying GREEN state Exit 42, and confirming 4/4 passing regression tests under Tier 1 container isolation.  
-> *(Screen actions, UI sequences, and voiceover lines are illustrative demonstration scripts presenting the actual runtime verification outputs of these two cases).*
+The sections below illustrate VulnTrace's verification and remediation capabilities across two representative evaluation workflows, detailing the exact evidence-backed operational sequence without presentation planning scripts.
 
-| Timestamp | Phase | Illustrative Screen Action | Voiceover Script |
-| :--- | :--- | :--- | :--- |
-| **0:00 - 0:30** | **The Problem** | Show SCA alert board listing PyYAML advisories across Cookiecutter and Cloud Config repositories. | *"Every developer knows the pain of SCA alert fatigue. You get dozens of critical alerts, but which ones are actually reachable? Today, we introduce VulnTrace."* |
-| **0:30 - 1:00** | **Reachability (`CASE-RW-03`)** | Inspect Cookiecutter repository. Trigger AST Reachability Analyzer. Call-graph confirms uncalled sink: `UNREACHABLE_FALSE_POSITIVE`. | *"VulnTrace maps the full AST call-graph from entrypoints. Cookiecutter requires PyYAML, but only calls safe_load. VulnTrace instantly suppresses this false positive."* |
-| **1:00 - 1:45** | **Reproduction RED (`CASE-RW-04`)** | Select Cloud Config microservice. Trigger Defensive Verification under Tier 1 container. Sentinel marker created on disk; RED state Exit 0 confirmed. | *"On a genuinely vulnerable service, VulnTrace synthesizes a target-bound harness and detonates it in an isolated container. Sentinel created on disk: RED state confirmed."* |
-| **1:45 - 2:20** | **Nemotron Patch** | Remediation card displays NVIDIA Nemotron 3 Ultra surgical diff. Patch Delta inspector verifies 2 lines changed across 1 file. | *"Next, NVIDIA Nemotron 3 Ultra synthesizes a surgical 2-line codemod. The AST validator parses the syntax before anything touches disk. Minimality criterion met."* |
-| **2:20 - 2:45** | **Differential Proof GREEN** | Differential verification re-runs identical harness. Parent Trust audit verifies sentinel absent on disk and dedicated Exit 42. | *"VulnTrace re-runs the identical harness against the patched code. The parent runner verifies Exit 42 and clean disk. Zero trust in child claims."* |
-| **2:45 - 3:00** | **Regressions & Export** | Native pytest regression suite passes 4 of 4 tests. Export verified SHA-256 hashed audit bundle and markdown report. | *"Finally, pytest confirms zero regressions. With one click, developers export a verified SHA-256 hashed audit bundle and markdown report. VulnTrace: from alert to proven fix."* |
+### Workflow 1: Pre-Execution False-Positive Reachability Suppression (`CASE-RW-03`)
+
+- **Context & SCA Alert:** Upstream Software Composition Analysis (SCA) flags `cookiecutter` for CVE-2020-14343 based on manifest declaration `pyyaml>=5.3.1` in `pyproject.toml`, which overlaps with the vulnerable PyYAML version range.
+- **AST Call-Graph Analysis:** Prior to any test execution or harness synthesis, VulnTrace constructs a multi-file AST call graph starting from application entrypoints (`cookiecutter/main.py`, `cookiecutter/cli.py`).
+- **Reachability Solver:** The call graph traces all invocations across 90 Python files and 453 functions. It verifies that while PyYAML is imported in `cookiecutter/config.py`, the only invocation is `yaml.safe_load`. No path connects entrypoints to `yaml.load` or any unsafe deserialization sink.
+- **Observed Result:** VulnTrace suppresses the alert before dynamic execution, recording legacy observation `UNREACHABLE_FALSE_POSITIVE` (canonical interpretation: `NOT_VULNERABLE_ALREADY_SAFE`, as static AST analysis confirms the vulnerable `yaml.load` pattern is absent and only `yaml.safe_load` is invoked). No container is provisioned, preventing unnecessary alert detonation.
+- **Documented Scope & Limitations:** AST reachability verifies direct static imports and statically resolvable function call paths. In accordance with [Technical Specification §4.10](docs/TECHNICAL_SPEC.md#410-threat-model--isolation-architecture), static analysis proves the absence of statically resolvable paths within its analysis scope; it does not resolve dynamic plugin hooks that might dynamically load modules at runtime.
+
+### Workflow 2: Verified Remediation Lifecycle (`CASE-RW-04`)
+
+- **Context & Target Selection:** Evaluated on independent microservice `repo_cloud_config` (commit `adc4c97`, initial service commit `cb0bf8f`), a cloud infrastructure manifest parser exposing an unvalidated `yaml.load` call in `service/yaml_adapter.py:parse_cloud_descriptor`.
+- **Baseline Test Suite:** Pre-remediation pytest run verifies 4 baseline unit tests pass cleanly in `tests/test_deploy.py`.
+- **Tier 1 Container Boundary:** In accordance with the Option A Strict Zero-Trust security policy, execution runs inside a Tier 1 rootless OCI container (`--network none`, read-only root filesystem, tmpfs `/tmp`, non-root uid `1000:1000`, dropped capabilities `ALL`).
+- **RED-State Reproduction:** VulnTrace synthesizes a targeted verification harness that invokes `parse_cloud_descriptor` with a benign canary payload. Detonation in Tier 1 successfully triggers the sink, creating a sentinel marker in disposable scratch space and exiting with Exit 0, confirming vulnerable behavior.
+- **Surgical Patch Synthesis & User-Approval Gate:** NVIDIA Nemotron 3 Ultra generates a minimal 2-line codemod replacing `yaml.load(raw_yaml, Loader=yaml.Loader)` with `yaml.safe_load(raw_yaml)`. An AST syntax gate parses and accepts the patch diff, and plan review enforces user approval before applying modifications to the codebase.
+- **GREEN-State Differential Verification:** The identical harness is re-executed against the patched workspace in Tier 1. The parent runner verifies zero sentinel markers created on disk and dedicated Exit 42, proving the exploit is blocked.
+- **Regression Suite & Evidence Export:** Native pytest re-executes all 4 baseline tests, confirming zero regressions. VulnTrace exports an Ed25519-signed evidence bundle (`bundle.json`), unified patch diff (`.diff`), and downloadable workspace zip.
+- **Protocol Conformance Status:** This result is recorded from historical single-pass evaluation (`protocol_conformance: LEGACY_SINGLE_PASS`, 1/1 repeat). In accordance with the canonical 3-repeat protocol, formal 3/3 repeat verification under Tier 1 remains pending.
 
 ---
 
@@ -309,12 +327,12 @@ pytest -v tests/
 
 ---
 
-## 6. VulnTrace-Bench Evaluation Results ([Technical Specification §5](docs/TECHNICAL_SPEC.md#5-vulntrace-bench-protocol--evidence-engine))
+## 10. VulnTrace-Bench Evaluation Results ([Technical Specification §5](docs/TECHNICAL_SPEC.md#5-vulntrace-bench-protocol--evidence-engine))
 
 <!-- VULNTRACE_BENCHMARK_TABLE_START -->
 ### VulnTrace-Bench Summary Metrics (Ground-Truth Empirical Observations)
 
-- **Total Independent Cases Evaluated:** `10` (4 Real-World Repositories, 6 Curated Synthetic Fixtures)
+- **Total Benchmark Entries Evaluated:** `10` (4 Real-World Revision Evaluations across 3 Distinct Repositories, 6 Curated Synthetic Fixtures)
 - **Authorized Sink Classes Covered:** `2` (Unsafe Deserialization, Path Traversal)
 - **Reachable Paths Identified:** `7 of 10 cases`
 - **Static False Positive / Already-Safe Suppressions:** `3 of 10 cases`
@@ -343,13 +361,25 @@ pytest -v tests/
 | **`CASE-RW-04`** | Cloud Config Independent Microservice | Unsafe Deserialization | Real World Repository | `REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED` | `GREEN_STATE_VERIFIED` | `OCI_CONTAINER_ISOLATED` | Legacy Single-Pass (3x Pending) |
 
 > [!NOTE]
+> **Historical Observation Labels & Protocol Conformance:**
+> Raw empirical observations retain their original recorded values. Their canonical interpretation depends on the case, pipeline phase, and supporting evidence: historical labels are not universal aliases for canonical verdicts. `UNREACHABLE_FALSE_POSITIVE`, for example, corresponds to `NO_STATIC_PATH_FOUND` when the recorded analysis establishes that the AST solver found no statically resolved path from entrypoints to the identified sink (`unreachable_dead_code`), while for `CASE-RW-03` (Cookiecutter) it corresponds to `NOT_VULNERABLE_ALREADY_SAFE` because AST analysis confirms the vulnerable sink pattern is completely absent and only `yaml.safe_load` is invoked. `NO_VULNERABILITIES_FOUND` corresponds to `NOT_VULNERABLE_ALREADY_SAFE` when static AST analysis proves the vulnerable symbol is absent or already migrated (`CASE-RW-02`). `INCONCLUSIVE` requires case-specific adjudication: for `inconclusive_guard`, an application pre-validation guard prevented exploit execution, canonically mapping to `RED_NOT_REPRODUCED`. For `CASE-RW-01`, while its historical raw behavioral observation recorded `INCONCLUSIVE` (exit code 10 non-reproduction, with M2 evidence attributing this to PyYAML 5.4.1 constructor error, unverified from raw run logs in this tranche), its canonical terminal adjudication under Spec §3.2 is `VERIFICATION_REJECTED` due to environment-policy violation (untrusted repository executed on host Tier 0 `LOCAL_SUBPROCESS_FALLBACK`, with `--unsafe-local` historically reported in project documentation but unverified from raw logs) and contradictory regression telemetry (`regression_passed: true` top-level vs `false` in repeat with 0 tests); this evidence-integrity rejection takes precedence over behavioral non-reproduction.
+> Furthermore, exactly 5 of 10 historical records carry the legacy single-pass `GREEN_STATE_VERIFIED` label (while all 10/10 records use `protocol_conformance: LEGACY_SINGLE_PASS`, 1/1 repeat). These reflect historical single-run outcomes and do not satisfy the canonical 3-repeat acceptance gate (0/10 cases are three-repeat verified).
+
+> [!NOTE]
+> **API Interaction, Control Flow & Telemetry Accounting:**
+> - **Multi-Tier LLM Orchestration:** When remediation is enabled (`req.use_nemotron=True`) and RED state is reproduced, VulnTrace executes up to three model tiers sequentially: Triage (Small: `NVIDIA-Nemotron-3-Nano-30B-A3B`), Planning (Mid: `llama-3.3-70b-instruct`), and Patch Synthesis (Ultra: `Nemotron-3-Ultra-550b-a55b`). Triage and Planning run sequentially; if Triage fails or returns `None`, Planning is not skipped and proceeds with `Triage: N/A`. Each structured stage supports up to `max_retries=2` (1 to 3 attempts) upon API error or schema validation failure. Patch synthesis invokes Nemotron Ultra; if synthesis fails, errors, outputs invalid Python syntax, or produces no semantic changes, AST deterministic rewrite is invoked as an automated fallback when enabled. AST fallback is a defensive repair fallback, not an inference bypass (inference was attempted first). Expected logical LLM calls per remediated case range from 3 (baseline) to 7 (with schema validation retries). Static suppressions, pre-patch non-reproduced cases, and all verification repeats execute exactly 0 LLM calls.
+> - **Threat Intelligence Dispatch (7 of 10 Cases):** Exactly 7 of 10 benchmark cases invoke `VerificationPipeline.run_pipeline()` and query threat intelligence (`TavilyClient.query_threat_intel()` during Stage 2 INTEL). Exactly 3 of 10 cases (`unreachable_dead_code`, `CASE-RW-02`, `CASE-RW-03`) are evaluated via standalone static AST reachability analysis without pipeline dispatch (0 Tavily invocations). Across verification repeats, dynamic test harnesses execute offline with kernel network denial (`--network none`) in Tier 1 containers, making exactly 0 Tavily calls.
+> - **Offline Cache-Miss Behavior (Static Verification):** In `TokenFactoryClient` (`vulntrace/llm/client.py:90-127`) and `TavilyClient` (`vulntrace/intel/tavily_client.py:56-116`), if live mode is disabled (`LIVE_LLM=0` / `LIVE_INTEL=0`) but an API key is configured and an unrecorded query misses the cassette cache, execution falls through to live outbound HTTP requests. Zero external calls in offline testing are guaranteed only when credentials are omitted (triggering immediate internal synthetic error reports) or queries match pre-recorded cassettes.
+> - **Telemetry Metric Disentanglement:** Benchmark reporting strictly distinguishes eight separate categories: (1) Client Invocations (Python function calls to API entry points), (2) Outbound HTTP Request Attempts (network socket transmissions initiated by the client library), (3) HTTP Responses Received (network responses returned by the remote server, including non-200 HTTP error statuses), (4) Successful HTTP 200 Responses with Valid JSON (completed advisory or completion responses), (5) Cassette Replays (deterministic disk fixtures where the client takes no outbound request on that code path), (6) Synthetic Error Reports (locally generated failure objects, such as internal 401 or exception-handled 500 reports created without a received HTTP response; internal 401 and exception-generated 500 objects are not counted as received HTTP responses), (7) Degraded Pipeline Outcomes (graceful fallbacks to static symbols or baseline context when threat intel or models are unavailable), and (8) Historical Telemetry Limitations (request-level HTTP metrics that were not recorded in the raw observations schema).
+
+> [!NOTE]
 > **Held-Out Generalizability Dataset Notice:**
 > In compliance with [Technical Specification §5.2](docs/TECHNICAL_SPEC.md#52-evaluation-protocol), candidate generalizability cases are documented in [`bench/HELDOUT.md`](bench/HELDOUT.md) (`aiohttp` CVE-2024-23334, `PyYAML` CVE-2020-1747, and `Tornado` CVE-2026-103263). These cases are strictly segregated from development tuning, are not executed during CI or development suites, and are excluded from the development-set metrics above.
 <!-- VULNTRACE_BENCHMARK_TABLE_END -->
 
 ---
 
-## 10. Disclosures & Formal Limitations
+## 11. Disclosures & Formal Limitations
 
 1. **Isolation Tiers & Safety Boundaries:** VulnTrace implements a strictly tiered execution architecture detailed in [`docs/SAFETY.md`](docs/SAFETY.md):
    - **Tier 1 (Rootless OCI Container):** The mandatory default execution tier for all real-world and non-curated repositories. Provides kernel-enforced network denial (`--network none`), read-only root filesystem (`--read-only`), unprivileged non-root identity (`--user 1000:1000`), dropped Linux capabilities (`--cap-drop ALL`), tmpfs scratch (`/tmp`), and cgroup resource limits (512MB RAM, 128 PIDs, 1.0 CPU).
@@ -359,7 +389,7 @@ pytest -v tests/
 
 ---
 
-## 11. Open-Source License
+## 12. Open-Source License
 
 VulnTrace is open-source software licensed under the **Apache License, Version 2.0**. See the [LICENSE](LICENSE) file for the full terms, conditions, and copyright notices.
 

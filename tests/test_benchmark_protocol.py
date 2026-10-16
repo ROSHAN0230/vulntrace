@@ -603,3 +603,258 @@ def test_heldout_file_metadata_and_oracles():
 
     # Segregation declaration
     assert "segregated" in content.lower()
+
+
+# ---------------------------------------------------------------------------
+# Section 5: Benchmark Generation, Drift Detection & Fallback Insertion Tests
+# ---------------------------------------------------------------------------
+
+def test_generate_markdown_table_summary_and_labels():
+    """Validates that generate_markdown_table produces the accurate summary and historical label notes."""
+    from bench.run import (
+        load_raw_observations,
+        derive_benchmark_results,
+        generate_markdown_table,
+    )
+
+    raw = load_raw_observations()
+    assert len(raw) == 10
+    results = derive_benchmark_results(raw)
+    assert len(results) == 10
+
+    table_md1 = generate_markdown_table(results)
+    table_md2 = generate_markdown_table(results)
+
+    # 1. Deterministic generation
+    assert table_md1 == table_md2
+
+    # 2. Summary string reports 4 real-world revision evaluations across 3 distinct repositories
+    assert "4 Real-World Revision Evaluations across 3 Distinct Repositories, 6 Curated Synthetic Fixtures" in table_md1
+
+    # 3. Discloses 0 of 10 three-repeat verified
+    assert "- **Three-Repeat Protocol Verified Status:** `0 of 10 cases`" in table_md1
+
+    # 4. Historical label note present and explains non-universal mappings
+    assert "Historical Observation Labels & Protocol Conformance:" in table_md1
+    assert "UNREACHABLE_FALSE_POSITIVE" in table_md1
+    assert "NO_STATIC_PATH_FOUND" in table_md1
+    assert "NO_VULNERABILITIES_FOUND" in table_md1
+    assert "NOT_VULNERABLE_ALREADY_SAFE" in table_md1
+    assert "INCONCLUSIVE" in table_md1
+    assert "RED_NOT_REPRODUCED" in table_md1
+    assert "VERIFICATION_REJECTED" in table_md1
+    assert "LOCAL_SUBPROCESS_FALLBACK" in table_md1
+    assert "unreachable_dead_code" in table_md1
+    assert "Cookiecutter" in table_md1
+    assert "environment-policy violation" in table_md1
+    assert "contradictory regression telemetry" in table_md1
+    assert "exactly 5 of 10 historical records carry the legacy single-pass `GREEN_STATE_VERIFIED` label" in table_md1
+    assert "--unsafe-local" in table_md1
+    assert "unverified from raw logs" in table_md1
+
+
+def test_ci_drift_zero_on_current_readme():
+    """Validates that check_ci_drift returns 0 drift on the repository's README.md."""
+    from bench.run import check_ci_drift, README_PATH
+
+    is_clean, msg = check_ci_drift(README_PATH)
+    assert is_clean is True, f"Expected 0 drift, got error: {msg}"
+    assert "0 drift" in msg
+
+
+def test_update_readme_fallback_insertion_and_idempotence(tmp_path):
+    """
+    Validates fallback insertion before Section 11 when markers are absent,
+    and ensures repeated generation is idempotent with zero duplicate sections.
+    """
+    from bench.run import update_readme_table, TABLE_START_MARKER, TABLE_END_MARKER
+
+    fake_readme = tmp_path / "README.md"
+    initial_content = (
+        "# VulnTrace\n\n"
+        "## 9. Clean-Room Setup Instructions\n\n"
+        "Setup details...\n\n"
+        "---\n\n"
+        "## 11. Disclosures & Formal Limitations\n\n"
+        "1. Isolation Tiers...\n\n"
+        "---\n\n"
+        "## 12. Open-Source License\n"
+    )
+    fake_readme.write_text(initial_content, encoding="utf-8")
+
+    # 1. First run: markers absent -> inserts Section 10 before Section 11
+    success = update_readme_table(fake_readme)
+    assert success is True
+
+    content_after_first = fake_readme.read_text(encoding="utf-8")
+    assert TABLE_START_MARKER in content_after_first
+    assert TABLE_END_MARKER in content_after_first
+    assert "## 10. VulnTrace-Bench Evaluation Results" in content_after_first
+
+    # Ensure Section 10 is placed before Section 11
+    idx_s10 = content_after_first.find("## 10. VulnTrace-Bench Evaluation Results")
+    idx_s11 = content_after_first.find("## 11. Disclosures & Formal Limitations")
+    assert idx_s10 != -1 and idx_s11 != -1
+    assert idx_s10 < idx_s11
+
+    # 2. Second run: markers present -> replaces in-place without duplicating
+    success_second = update_readme_table(fake_readme)
+    assert success_second is True
+
+    content_after_second = fake_readme.read_text(encoding="utf-8")
+    assert content_after_second.count("## 10. VulnTrace-Bench Evaluation Results") == 1
+    assert content_after_second.count(TABLE_START_MARKER) == 1
+    assert content_after_second.count(TABLE_END_MARKER) == 1
+    assert content_after_second.count("## 11. Disclosures & Formal Limitations") == 1
+
+
+def test_legacy_single_pass_verdict_labels_not_conforming():
+    """
+    Validates that derived benchmark records with historical GREEN labels in single-pass runs
+    are strictly ineligible for 3-repeat claims and are formatted as 'Legacy Single-Pass (3x Pending)'.
+    Programmatically derives the exact counts from raw observations.
+    """
+    from bench.run import (
+        load_raw_observations,
+        derive_benchmark_results,
+        generate_markdown_table,
+    )
+
+    raw = load_raw_observations()
+    results = derive_benchmark_results(raw)
+
+    # In raw empirical observations, exactly 5 are GREEN_STATE_VERIFIED
+    green_count = sum(1 for r in raw if r.get("behavioral_verdict") == "GREEN_STATE_VERIFIED")
+    assert green_count == 5
+
+    # All 10 are LEGACY_SINGLE_PASS
+    single_pass_count = sum(1 for r in raw if r.get("protocol_conformance") == "LEGACY_SINGLE_PASS")
+    assert single_pass_count == 10
+
+    # 0 are three-repeat verified
+    three_repeat_count = sum(1 for r in raw if r.get("three_repeat_verified"))
+    assert three_repeat_count == 0
+
+    for r in results:
+        assert r["three_repeat_verified"] is False
+        assert r["protocol_conformance"] == "LEGACY_SINGLE_PASS"
+
+    table_md = generate_markdown_table(results)
+    assert "3/3 Verified" not in table_md
+    assert table_md.count("Legacy Single-Pass (3x Pending)") == 10
+
+
+def test_budget_accounting_and_case_rw01_adjudication_semantics():
+    """
+    Validates CASE-RW-01 contradictory telemetry in raw observation,
+    ensures its canonical adjudication is VERIFICATION_REJECTED while preserving
+    INCONCLUSIVE as its raw behavioral observation, and tests count separation.
+    """
+    from bench.run import load_raw_observations, derive_benchmark_results, generate_markdown_table
+
+    raw = load_raw_observations()
+    case_rw01 = next((r for r in raw if r.get("id") == "CASE-RW-01"), None)
+    assert case_rw01 is not None
+
+    # Verify raw fields for CASE-RW-01
+    assert case_rw01["behavioral_verdict"] == "INCONCLUSIVE"
+    assert case_rw01["isolation_tier"] == "LOCAL_SUBPROCESS_FALLBACK"
+    assert case_rw01["repeat_count"] == 1
+    assert case_rw01["three_repeat_verified"] is False
+    assert case_rw01["observed_repeat_results"][0]["positive_control_passed"] is False
+
+    # Verify contradictory regression telemetry in raw observation:
+    # top-level claims True, but observed repeat claims False (with test_count == 0)
+    assert case_rw01["regression_passed"] is True
+    assert case_rw01["regression_test_count"] == 0
+    repeat_obs = case_rw01["observed_repeat_results"][0]
+    assert repeat_obs["regression_passed"] is False
+    assert repeat_obs["exit_code"] == 10
+
+    results = derive_benchmark_results(raw)
+    table_md = generate_markdown_table(results)
+
+    # In the table itself, the raw behavioral verdict remains INCONCLUSIVE
+    assert "| **`CASE-RW-01`** | Flasgger Vulnerable Commit (163a753) | Unsafe Deserialization | Real World Repository | `REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED` | `INCONCLUSIVE` | `LOCAL_SUBPROCESS_FALLBACK` | Legacy Single-Pass (3x Pending) |" in table_md
+
+    # In the note, canonical terminal adjudication is VERIFICATION_REJECTED
+    assert "canonical terminal adjudication under Spec §3.2 is `VERIFICATION_REJECTED`" in table_md
+    assert "untrusted repository executed on host Tier 0 `LOCAL_SUBPROCESS_FALLBACK`" in table_md
+    assert "contradictory regression telemetry" in table_md
+
+
+def test_control_flow_and_api_accounting_semantics():
+    """
+    Validates that generated benchmark notes and static code structures accurately reflect:
+    1. Multi-tier LLM control flow (Triage, Planning, Synthesis, AST fallback, 3-7 call range).
+    2. 7/10 Tavily dispatch path vs 3/10 static reachability bypass.
+    3. Offline client cache-miss fall-through risk to live HTTP requests.
+    4. Formal metric disentanglement (client invocations, HTTP attempts, responses, replays, synthetic errors, degraded).
+    """
+    import inspect
+    from bench.run import load_raw_observations, derive_benchmark_results, generate_markdown_table
+    import vulntrace.llm.client as llm_client_mod
+    import vulntrace.intel.tavily_client as tavily_client_mod
+    import real_world_eval.run_eval as run_eval_mod
+
+    # 1. Verify Markdown Table Notes
+    raw = load_raw_observations()
+    results = derive_benchmark_results(raw)
+    table_md = generate_markdown_table(results)
+
+    assert "API Interaction, Control Flow & Telemetry Accounting:" in table_md
+    assert "Multi-Tier LLM Orchestration" in table_md
+    assert "Triage (Small: `NVIDIA-Nemotron-3-Nano-30B-A3B`)" in table_md
+    assert "Planning (Mid: `llama-3.3-70b-instruct`)" in table_md
+    assert "Patch Synthesis (Ultra: `Nemotron-3-Ultra-550b-a55b`)" in table_md
+    assert "Triage: N/A" in table_md
+    assert "max_retries=2" in table_md
+    assert "3 (baseline) to 7 (with schema validation retries)" in table_md
+    assert "AST fallback is a defensive repair fallback, not an inference bypass" in table_md
+
+    assert "Threat Intelligence Dispatch (7 of 10 Cases)" in table_md
+    assert "7 of 10 benchmark cases invoke `VerificationPipeline.run_pipeline()`" in table_md
+    assert "unreachable_dead_code" in table_md and "CASE-RW-02" in table_md and "CASE-RW-03" in table_md
+    assert "standalone static AST reachability analysis without pipeline dispatch (0 Tavily invocations)" in table_md
+
+    assert "Offline Cache-Miss Behavior (Static Verification)" in table_md
+    assert "falls through to live outbound HTTP requests" in table_md
+
+    assert "Telemetry Metric Disentanglement:" in table_md
+    assert "(1) Client Invocations" in table_md
+    assert "(2) Outbound HTTP Request Attempts" in table_md
+    assert "(3) HTTP Responses Received" in table_md
+    assert "(4) Successful HTTP 200 Responses with Valid JSON" in table_md
+    assert "(5) Cassette Replays" in table_md
+    assert "takes no outbound request on that code path" in table_md
+    assert "(6) Synthetic Error Reports" in table_md
+    assert "created without a received HTTP response" in table_md
+    assert "internal 401 and exception-generated 500 objects are not counted as received HTTP responses" in table_md
+    assert "(7) Degraded Pipeline Outcomes" in table_md
+    assert "(8) Historical Telemetry Limitations" in table_md
+
+    # 2. Static Code Verification: TokenFactoryClient Cache-Miss Fall-Through
+    tf_source = inspect.getsource(llm_client_mod.TokenFactoryClient.generate_chat)
+    assert "if not LLMCassetteManager.is_live_enabled() or not self.api_key:" in tf_source
+    assert "if not self.api_key:" in tf_source
+    assert "# 2. Live HTTP Call" in tf_source
+
+    # 3. Static Code Verification: TavilyClient Cache-Miss Fall-Through
+    tavily_source = inspect.getsource(tavily_client_mod.TavilyClient.search_with_relevance)
+    assert "if not IntelCassetteManager.is_live_enabled() or not self.api_key:" in tavily_source
+    assert "status_code=401" in tavily_source
+    assert "await client.post(self.ENDPOINT, json=payload)" in tavily_source
+
+    # 4. Static Code Verification: Benchmark Runner Case-Dispatch Paths
+    eval_source = inspect.getsource(run_eval_mod)
+    # CASE-RW-01 calls pipeline
+    assert "evaluate_flasgger_vulnerable" in eval_source
+    assert "VerificationPipeline.run_pipeline(pipeline_req)" in eval_source
+    # CASE-RW-02 calls only AST analyzer
+    rw02_source = inspect.getsource(run_eval_mod.evaluate_flasgger_patched)
+    assert "AstReachabilityAnalyzer.analyze_repository" in rw02_source
+    assert "VerificationPipeline.run_pipeline" not in rw02_source
+    # CASE-RW-03 calls only AST analyzer
+    rw03_source = inspect.getsource(run_eval_mod.evaluate_cookiecutter_false_positive)
+    assert "AstReachabilityAnalyzer.analyze_repository" in rw03_source
+    assert "VerificationPipeline.run_pipeline" not in rw03_source
