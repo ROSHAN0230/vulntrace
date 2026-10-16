@@ -16,6 +16,10 @@ from vulntrace.sinks.deserialization import (
     PickleDeserializationOracle,
     DeserializationSinkOracle,
 )
+from vulntrace.sinks.path_traversal import (
+    TarPathTraversalOracle,
+    ZipSafeControlOracle,
+)
 
 
 class SinkOracleRegistry:
@@ -24,6 +28,8 @@ class SinkOracleRegistry:
     _oracles: List[BaseSinkOracle] = [
         YamlDeserializationOracle(),
         PickleDeserializationOracle(),
+        TarPathTraversalOracle(),
+        ZipSafeControlOracle(),
     ]
 
     @classmethod
@@ -63,7 +69,8 @@ class SinkOracleRegistry:
         if not intel or getattr(intel, "status", "") == "degraded":
             return [
                 "yaml.load", "yaml.full_load", "os.system", "subprocess.Popen",
-                "subprocess.call", "pickle.loads", "pickle.load", "eval", "exec"
+                "subprocess.call", "pickle.loads", "pickle.load", "eval", "exec",
+                "tarfile.extractall", "tarfile.TarFile.extractall", "tarfile.extract",
             ]
         symbols = list(getattr(intel, "affected_symbols", []))
         oracle = cls.get_oracle_for_intel(intel)
@@ -73,7 +80,8 @@ class SinkOracleRegistry:
                     symbols.append(s)
         return symbols if symbols else [
             "yaml.load", "yaml.full_load", "os.system", "subprocess.Popen",
-            "subprocess.call", "pickle.loads", "pickle.load", "eval", "exec"
+            "subprocess.call", "pickle.loads", "pickle.load", "eval", "exec",
+            "tarfile.extractall", "tarfile.TarFile.extractall", "tarfile.extract",
         ]
 
     @classmethod
@@ -91,5 +99,7 @@ __all__ = [
     "YamlDeserializationOracle",
     "PickleDeserializationOracle",
     "DeserializationSinkOracle",
+    "TarPathTraversalOracle",
+    "ZipSafeControlOracle",
     "SinkOracleRegistry",
 ]

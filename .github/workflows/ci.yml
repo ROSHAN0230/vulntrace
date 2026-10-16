@@ -36,7 +36,11 @@ jobs:
 
     - name: Run Ruff Linting
       run: |
-        ruff check vulntrace/ tests/
+        ruff check vulntrace/ bench/ tests/
+
+    - name: Run Benchmark Drift Check (Spec §5.2)
+      run: |
+        python bench/run.py --ci
 
     - name: Run Deterministic Offline Test Suite
       id: run_tests

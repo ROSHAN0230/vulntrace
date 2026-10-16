@@ -41,8 +41,8 @@ export const VerificationWorkbench: React.FC<VerificationWorkbenchProps> = ({
   const [exporting, setExporting] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportContent, setExportContent] = useState<string>('');
-  const [showJudgeModal, setShowJudgeModal] = useState(false);
-  const [judgeTab, setJudgeTab] = useState<'questions' | 'matrix' | 'disclosures'>('questions');
+  const [showArchitectureModal, setShowArchitectureModal] = useState(false);
+  const [architectureTab, setArchitectureTab] = useState<'questions' | 'matrix' | 'disclosures'>('questions');
 
   const handleExportEvidence = async (format: 'json' | 'markdown') => {
     if (!data) return;
@@ -167,12 +167,12 @@ export const VerificationWorkbench: React.FC<VerificationWorkbenchProps> = ({
         <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
-            onClick={() => setShowJudgeModal(true)}
+            onClick={() => setShowArchitectureModal(true)}
             className="bg-surface-1 hover:bg-surface-inset border border-indigo-600/40 text-indigo-300 font-medium px-2.5 py-1.5 rounded text-xs flex items-center gap-1 transition-colors font-sans shadow-sm"
-            title="View Judge Walkthrough & 9 Core Questions"
+            title="View Architecture Walkthrough & 9 Core Questions"
           >
             <HelpCircle className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Judge Guide</span>
+            <span>Architecture Guide</span>
           </button>
 
           {data && (
@@ -639,18 +639,18 @@ export const VerificationWorkbench: React.FC<VerificationWorkbenchProps> = ({
         </div>
       )}
 
-      {/* Modal for Judge Walkthrough & Evidence FAQ */}
-      {showJudgeModal && (
+      {/* Modal for Architecture Walkthrough & Evidence FAQ */}
+      {showArchitectureModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className="bg-surface-2 border border-border-subtle rounded-lg max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl">
             <div className="p-3.5 border-b border-border-subtle flex items-center justify-between bg-surface-1">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-emerald-400" />
-                <span className="font-bold text-sm text-white">VulnTrace — Judge Evaluation Guide & Architecture</span>
+                <span className="font-bold text-sm text-white">VulnTrace — Architecture Guide & System Evaluation</span>
               </div>
               <button
                 type="button"
-                onClick={() => setShowJudgeModal(false)}
+                onClick={() => setShowArchitectureModal(false)}
                 className="text-slate-400 hover:text-white p-1 rounded hover:bg-surface-inset transition-colors"
               >
                 <X className="w-4 h-4" />
@@ -661,20 +661,20 @@ export const VerificationWorkbench: React.FC<VerificationWorkbenchProps> = ({
             <div className="flex border-b border-border-subtle bg-surface-inset text-xs font-mono">
               <button
                 type="button"
-                onClick={() => setJudgeTab('questions')}
+                onClick={() => setArchitectureTab('questions')}
                 className={`px-4 py-2 font-semibold border-b-2 transition-colors ${
-                  judgeTab === 'questions'
+                  architectureTab === 'questions'
                     ? 'border-emerald-500 text-emerald-300 bg-surface-2'
                     : 'border-transparent text-slate-400 hover:text-slate-200'
                 }`}
               >
-                9 Core Judge Questions
+                9 Core System Questions
               </button>
               <button
                 type="button"
-                onClick={() => setJudgeTab('matrix')}
+                onClick={() => setArchitectureTab('matrix')}
                 className={`px-4 py-2 font-semibold border-b-2 transition-colors ${
-                  judgeTab === 'matrix'
+                  architectureTab === 'matrix'
                     ? 'border-emerald-500 text-emerald-300 bg-surface-2'
                     : 'border-transparent text-slate-400 hover:text-slate-200'
                 }`}
@@ -683,9 +683,9 @@ export const VerificationWorkbench: React.FC<VerificationWorkbenchProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => setJudgeTab('disclosures')}
+                onClick={() => setArchitectureTab('disclosures')}
                 className={`px-4 py-2 font-semibold border-b-2 transition-colors ${
-                  judgeTab === 'disclosures'
+                  architectureTab === 'disclosures'
                     ? 'border-emerald-500 text-emerald-300 bg-surface-2'
                     : 'border-transparent text-slate-400 hover:text-slate-200'
                 }`}
@@ -696,7 +696,7 @@ export const VerificationWorkbench: React.FC<VerificationWorkbenchProps> = ({
 
             {/* Tab Body */}
             <div className="p-5 overflow-y-auto font-sans text-xs text-slate-300 space-y-4 flex-1 leading-relaxed">
-              {judgeTab === 'questions' && (
+              {architectureTab === 'questions' && (
                 <div className="space-y-4">
                   <div className="border border-border-subtle rounded p-3 bg-surface-1">
                     <h3 className="font-bold text-white text-sm flex items-center gap-2">
@@ -781,7 +781,7 @@ export const VerificationWorkbench: React.FC<VerificationWorkbenchProps> = ({
                 </div>
               )}
 
-              {judgeTab === 'matrix' && (
+              {architectureTab === 'matrix' && (
                 <div className="space-y-4">
                   <div className="border border-border-subtle rounded overflow-hidden">
                     <table className="w-full text-left border-collapse text-[11px] font-mono">
@@ -848,7 +848,7 @@ export const VerificationWorkbench: React.FC<VerificationWorkbenchProps> = ({
                 </div>
               )}
 
-              {judgeTab === 'disclosures' && (
+              {architectureTab === 'disclosures' && (
                 <div className="space-y-3 font-mono text-[11px]">
                   <div className="p-3 rounded bg-surface-1 border border-border-subtle space-y-1.5">
                     <div className="font-bold text-amber-300">ConTree Cloud Execution Status</div>
@@ -875,7 +875,7 @@ export const VerificationWorkbench: React.FC<VerificationWorkbenchProps> = ({
             <div className="p-3 border-t border-border-subtle flex justify-end bg-surface-1">
               <button
                 type="button"
-                onClick={() => setShowJudgeModal(false)}
+                onClick={() => setShowArchitectureModal(false)}
                 className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-1.5 rounded text-xs font-semibold"
               >
                 Close Guide

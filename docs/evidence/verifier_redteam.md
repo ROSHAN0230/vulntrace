@@ -1,7 +1,7 @@
 # VulnTrace Verifier Red-Team & Anti-Gaming Audit Evidence (Milestone M1)
 
 **Milestone:** M1 — Verifier Hardening + Deserialization Oracle  
-**Specification Reference:** `VULNTRACE_STUDIO_SPEC.md` §4.3, §4.4, Milestone M1  
+**Specification Reference:** `docs/TECHNICAL_SPEC.md` §4.3, §4.4, Milestone M1
 **Execution Timestamp:** 2026-10-05T19:33:00+05:30  
 **Test Suite Status:** 34/34 passed (`pytest tests/verifier/ -q`), 140/140 passed full suite  
 

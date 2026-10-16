@@ -8,7 +8,7 @@
 
 ## 1. Executive Summary & Design Overview
 
-Milestone M6 delivers the complete, production-grade **VulnTrace Studio frontend**, realized as the canonical seven-step guided application specified in `VULNTRACE_STUDIO_SPEC.md` §4.13. 
+Milestone M6 delivers the complete, production-grade **VulnTrace Studio frontend**, realized as the canonical seven-step guided application specified in `docs/TECHNICAL_SPEC.md` §4.13.
 
 Rather than a static dashboard or mock interface, every step is strictly connected to real VulnTrace backend behavior, live Server-Sent Events (SSE) telemetry, verifiable Schema v1 evidence bundles, and cryptographic Ed25519 signing.
 

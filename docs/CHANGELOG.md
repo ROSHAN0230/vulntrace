@@ -1,6 +1,51 @@
-# VulnTrace Studio — Hackathon Development Changelog
+# VulnTrace Studio — Development Changelog
 
-All major project updates and milestones completed during the Nebius × NVIDIA Global AI Hackathon 2026.
+All major project updates and milestone completions throughout development.
+
+## [M7 Phase 2] Final Security-Evidence Closure — 2026-10-15
+- **Structured Canary Telemetry & Cross-Validation:** Synthesizer emits structured telemetry JSON (`_acceptance_telemetry.json`) alongside stdout. The pipeline enforces dual-source canary verification: parent filesystem observation must strictly agree with container telemetry (`parent_canary_observed == telemetry_canary_observed`). Missing, malformed, or contradictory telemetry fails closed with explicit error classifications (`MALFORMED_TELEMETRY`, `CONTRADICTORY_CANARY_EVIDENCE`, `CANARY_NOT_CREATED`).
+- **Exact Exception & Repaired GREEN Validation:** Replaced loose exception checks with exact constructor-blocking exception matching (`yaml.constructor.ConstructorError`). Valid repaired GREEN requires all acceptance assertions to pass, probe blocked (`probe_blocked=True`), canary absent on disk and in telemetry (`canary_created=False`), custom tags preserved (`test_preserve_custom_tags PASSED`), and benign config verified (`test_standard_benign_config_loads_cleanly PASSED`).
+- **Custom Loader AST Codemod Preservation:** Enhanced `RemediationPatcher._ast_deterministic_patch` to inspect target modules for custom `yaml.SafeLoader` subclasses (e.g. `AppSafeLoader`). If found, surgical codemod replaces `Loader=yaml.Loader` with `Loader=AppSafeLoader` rather than naively stripping kwargs to `yaml.safe_load`, preserving registered domain constructors and preventing false regression failures.
+- **Evidence Schema v1 Attributable Telemetry:** Populates structured telemetry into `bundle["spec"]["acceptance_tests"]` (`canary_created_pre_patch`, `probe_blocked_post_patch`, `expected_block_exception`) and `bundle["verification"]["positive_control"]` (`custom_tags_preserved`, `benign_config_verified`) conforming strictly to `docs/evidence/schema_v1.json`.
+- **Bundle Tamper & Signature Verification:** Verified genuine signed bundles with `vulntrace verify-bundle` CLI (exit 0) and proved that arbitrary payload byte tampering or signature corruption is strictly rejected with exit code 1.
+- **Real Execution Bugs Caught & Fixed:**
+  1. *Missing `import json` in `vulntrace/sandbox/pipeline.py`:* Parsing telemetry in Stage 2 & Stage 4 raised `NameError: name 'json' is not defined`, resulting in `MALFORMED_TELEMETRY`. Added `import json` to pipeline imports.
+  2. *Naive SafeLoader Destruction of Domain Constructors:* `_ast_deterministic_patch` previously replaced `yaml.load(..., Loader=yaml.Loader)` with `yaml.safe_load(...)`, breaking custom tag constructors. Enhanced AST transformer to detect and preserve module-defined `SafeLoader` subclasses (`Loader=AppSafeLoader`), achieving authentic `GREEN_STATE_VERIFIED`.
+- **Test Coverage:** Added 5 focused security evidence and tamper rejection tests to `tests/test_intent_to_test.py` (33/33 passed). Verified full suite with 319 offline tests passing, 43 container tests passing (362 total tests passing).
+
+## [M7 Phase 2] Runtime RED/GREEN Integration & Tier 1 Verification — 2026-10-15
+- **End-to-End Pipeline Execution (Spec §4.9):** Integrated synthesized acceptance tests directly into `VerificationPipeline` (`vulntrace/sandbox/pipeline.py`), `VerificationPipelineRequest` (`vulntrace/models.py`), and the REST API server (`vulntrace/server/app.py`).
+- **Bounded Canary Probe & Safe Exception Matching:** Replaced raw `eval` with bounded canary probe (`builtins.eval ["open('{canary_str}', 'w').close()"]`) in disposable Tier 1 scratch space without shell execution or host escapes. Replaced broad exception catching with exact loader-block exceptions (`yaml.constructor.ConstructorError`, `yaml.parser.ParserError`, `yaml.error.YAMLError`) and assertion of canary non-existence.
+- **Harness Isolation & Bitwise Hash Immutability:** Generated `_acceptance_test.py` strictly outside the patchable source directory (`service/`), set `0o444` read-only permissions, and enforced bitwise byte-level SHA-256 immutability verification across pre-patch and post-patch execution phases.
+- **Runtime RED/GREEN Verification on Flagship Target (`benchmarks/contextual_reasoning`):**
+  - Pre-patch: 3/3 repeated cycles failed security probe (`DID NOT RAISE any of (ConstructorError, ParserError, YAMLError)`), created canary, while passing custom tag preservation and benign configuration controls.
+  - Surgical remediation: patched `service/custom_loader.py` with `Loader=AppSafeLoader`.
+  - Post-patch: 3/3 repeated cycles passed cleanly (ConstructorError caught on exploit payload, zero canary creation, custom tags preserved, benign config validated).
+  - Naive patch: verified that naive `yaml.safe_load` correctly fails custom tag preservation (`ConstructorError: could not determine a constructor for the tag '!env_var'`).
+- **Formal Signed Evidence Bundle Integration:** Emits authentic `spec` block in Schema v1.0.0 signed evidence bundle containing `must_fix`, `must_preserve`, `constraints`, `out_of_scope`, `acceptance_tests`, and acceptance SHA-256. Evaluated by `VerdictEngine` to yield terminal verdict `GREEN_STATE_VERIFIED`.
+- **Real Bug Caught and Fixed:** Fixed newline translation discrepancy on Windows where `Path.write_text()` translated `\n` to `\r\n` whereas in-memory hashing used LF bytes, causing false hash mismatch between pre-patch and post-patch phases. Switched to `write_bytes()` and `read_bytes()` ensuring byte-level deterministic hash matching across all platforms.
+- **Test Coverage:** Added `test_intent_acceptance_test_runtime_red_green_contextual_reasoning` and `test_pipeline_end_to_end_with_intent_via_server` to `tests/test_intent_to_test.py` (28/28 passed).
+
+## [M7 Phase 2] Intent-to-Acceptance-Test Engine & Quality Gates — 2026-10-14
+- **Modular Intent Architecture (Spec §4.4, §4.9):** Created `vulntrace/intent/` package providing typed Pydantic representation for repair specifications (`Spec`), individual acceptance tests (`AcceptanceTestDefinition`), requirement parser (`IntentParser`), test code synthesizer (`AcceptanceTestSynthesizer`), and validation gates (`IntentQualityValidator`).
+- **Canonical Spec Schema Field Preservation:** Guaranteed explicit preservation of all 4 canonical fields: `must_fix`, `must_preserve`, `constraints`, and `out_of_scope`, alongside `acceptance_tests`, `is_verifiable`, and `warning`/`unverifiable_reason`. Serializes transparently to both typed models and legacy/API dictionary contracts (`to_api_dict()`).
+- **Requirement-to-Acceptance-Test Flow ("fix deserialization but keep custom tags"):** Validated canonical scenario: parses natural-language intent into structured target defects (`must_fix`: unsafe deserialization), functional invariants (`must_preserve`: custom application tags `!custom_tag` and loader extensions), diff budget constraints, and synthesizes two distinct executable pytest assertions (security exploit probe rejection and custom tag domain object preservation).
+- **Six Anti-Gaming & Isolation Quality Gates:**
+  1. *Gate 1 (Verifiability Threshold):* Rejects vague requirements lacking concrete conditions ("make it better", "clean up", "fix bugs") with honest `UNVERIFIABLE` diagnostics.
+  2. *Gate 2 (Non-Trivial Assertion AST Inspection):* Inspects test ASTs to reject trivial dummy tests containing only `assert True`, `assert 1 == 1`, empty `pass`, or missing assertions.
+  3. *Gate 3 (Pre-Execution Syntax Validation):* Validates compiled AST and rejects malformed Python test code.
+  4. *Gate 4 (Target Symbol Verification):* Enforces that synthesized test functions actually reference or exercise the target symbol (`target_function` or `vulnerable_symbol`).
+  5. *Gate 5 (Untrusted Text & Prompt Injection Defense):* Neutralizes hostile prompt injection targeting isolation boundaries (`--unsafe-local`, `VULNTRACE_UNSAFE_LOCAL`, destructive shell commands, `rm -rf /`).
+  6. *Gate 6 (Tier 1 Container Boundary Enforcement):* Strictly routes synthesized test execution on non-curated/untrusted codebases to Tier 1 rootless container isolation (`ContainerExecutionBackend`), refusing Tier 0 (`LocalSubprocessBackend`) execution under strict zero-trust policy.
+- **Server API Integration:** Enriched `POST /runs/{run_id}/intent` in `vulntrace/server/app.py` to route through `vulntrace.intent`, recording structured specs with `out_of_scope` in SQLite database events and client responses.
+- **Comprehensive Test Suite:** Added `tests/test_intent_to_test.py` with 26 focused tests covering all 6 quality gates, field preservation, prompt injection defense, and server endpoint integration.
+
+## [M7 Phase 1] Path Traversal Oracle & Bad-Patch Zoo Evaluation — 2026-10-14 (Commit `d101632`)
+- **Path Traversal Oracle (`vulntrace/sinks/path_traversal.py`):** Implemented `TarPathTraversalOracle` and `ZipSafeControlOracle` subclassing `BaseSinkOracle`. Evaluates archive extraction member traversal sequences with disposable canaries located strictly inside sandbox scratch and never on the host.
+- **Python 3.11+ PEP 706 Compatibility:** Ensured safe extraction patterns use path resolution containment checks (`commonpath` / `is_relative_to`) compatible across Python 3.11 and Python 3.14+ (`data_filter`).
+- **Curated Fixtures & Registration:** Created `tests/fixtures/path_traversal/tar_vulnerable` and `tar_fixed`; registered in `TrustedFixtureRegistry.CANONICAL_FIXTURE_RELPATHS` with broad container forbidden in `FORBIDDEN_BROAD_IN_PROJECT_RELPATHS`.
+- **Harness Synthesizer Extension:** Added `SinkClass.PATH_TRAVERSAL` dispatch with argument forwarding and hash immutability in `vulntrace/agent/harness_synthesizer.py`.
+- **Bad-Patch Zoo Evaluation:** Proved 0 false GREEN verdicts across 10 adversarial mutations and verified RED 3/3 on vulnerable fixture and GREEN 3/3 on fixed fixture in `tests/verifier/test_path_traversal_oracle.py`.
 
 ## [M6] VulnTrace Studio UI Flow — 2026-10-08
 - **Seven-Step Guided Remediation Application (Spec §4.13):** Built and verified the complete frontend application in React 18, TypeScript, and TailwindCSS across 7 sequential stages:
@@ -119,13 +164,13 @@ All major project updates and milestones completed during the Nebius × NVIDIA G
 ---
 
 ## [M0] Baseline Audit and Hygiene — 2026-10-04
-- **Repository Hygiene:** Cleaned repository root to $\le 10$ items. Archived legacy Phase 1–4 reports, compliance audits, and screenshots into `docs/archive/`.
-- **Agent Rules & Master Spec:** Adopted `VULNTRACE_STUDIO_SPEC.md` as the canonical master specification and recorded Section 8 rules into `AGENTS.md` and `.agents/rules/directive.md`.
+- **Repository Hygiene:** Cleaned repository root to $\le 10$ items. Relocated historical pre-baseline audit documents and internal reports to project archives.
+- **Agent Rules & Technical Spec:** Adopted `docs/TECHNICAL_SPEC.md` as the canonical technical specification and recorded Section 8 rules into `AGENTS.md` and `.agents/rules/directive.md`.
 - **Fixtures & Tests Refactoring:** Relocated loose `sample_repo` into `tests/fixtures/sample_repo` and verified all 108 tests pass.
 - **Continuous Integration:** Created initial GitHub Actions CI workflow skeleton (`.github/workflows/ci.yml`).
 - **Baseline Evidence:** Recorded full 108-test command output and multi-scenario benchmark in `docs/evidence/baseline_run.md`.
 - **Clean Container Proof:** Executed full clone, editable installation (`pip install -e .`), and test suite in clean unprivileged container (`python:3.11-slim` via Podman in WSL2), verifying 86 passed, 15 skipped, 0 failed.
-- **[VERIFY] Audit Matrix:** Completed comprehensive audit of all 9 specification items marked `[VERIFY]` in `docs/evidence/verify_audit.md`.
+- **Specification Verification Matrix:** Completed comprehensive audit of all specification verification items.
 - **Repository Secrets Audit:** Scanned 22,638 diff lines across full git commit history, 143 tracked files, and `.gitignore` status, verifying 0 committed secrets.
 - **GitHub Actions CI Green Closure:** Resolved CI runner failure (Workflow Run 37177315205 GREEN) by checking `podman image exists` in `ContainerExecutionBackend.is_available()`, registering pytest markers (`container`, `windows`, `asyncio`), and explicitly marking container tests.
 

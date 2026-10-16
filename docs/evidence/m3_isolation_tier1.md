@@ -1,7 +1,7 @@
 # VulnTrace Isolation Tier 1 Evidence & Acceptance Report (Milestone M3)
 
 **Milestone:** M3 — Isolation Tier 1: Rootless Container Isolation & Adversarial Containment Proofs  
-**Specification Reference:** `VULNTRACE_STUDIO_SPEC.md` §4.6, §4.14, and Milestone M3 Acceptance Criteria  
+**Specification Reference:** `docs/TECHNICAL_SPEC.md` §4.6, §4.14, and Milestone M3 Acceptance Criteria
 **Audit Date:** 2026-10-06  
 **Container & Conformance Test Suite:** **41 / 41 PASSED** (62.70s)  
 **Host & Non-Container Test Suite:** **128 / 128 PASSED** (269.06s)  

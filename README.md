@@ -1,7 +1,6 @@
 # VulnTrace
 
-**Autonomous Vulnerability Reproduction and Verified Patching Agent**  
-*Built for the Nebius × NVIDIA Global AI Hackathon 2026*
+**Autonomous Vulnerability Reproduction and Verified Patching Agent**
 
 ---
 
@@ -169,7 +168,7 @@ To prevent LLM scope creep or unnecessary refactoring, VulnTrace enforces an exp
 
 ---
 
-## 7. Judge Evaluation Guide: 9 Core Questions Answered
+## 7. Architecture & Evaluation FAQ: 9 Core System Questions
 
 ### Q1. What core problem does VulnTrace solve?
 SCA tools generate immense alert fatigue by warning on every library version in a lockfile, even when vulnerable functions are never called. VulnTrace establishes empirical reachability, reproduces the vulnerability behavior, synthesizes a surgical patch, and verifies that the patch stops the exploit without breaking existing tests.
@@ -195,7 +194,7 @@ Nemotron 3 Ultra (hosted on Nebius Token Factory) generates surgical, AST-parsed
 Tavily Search API queries live CVE intelligence, NVD/OSV advisories, and technical PoC disclosures. Verified CVE-specific findings returned by Tavily are filtered for strict relevance and then injected directly into NVIDIA Nemotron 3 Ultra's reasoning context, providing the model with grounded real-world vulnerability context and exploit mechanics when synthesizing minimal, surgical remediations.
 
 ### Q8. What is the status of ConTree Cloud?
-ConTree Cloud sandboxing was evaluated during initial hackathon integration testing (last verified 2026-10-02), where the API returned `PERMISSION_DENIED (HTTP 403)` on `/sandboxes` because provided credentials lacked sandbox provisioning permissions. Rather than simulating or falsifying cloud execution, VulnTrace truthfully discloses this limitation. VulnTrace executes using verified local containment engines: Tier 1 rootless container isolation (`OCI_CONTAINER_ISOLATED`) is mandatory for all non-curated/untrusted code, while Tier 0 (`LOCAL_SUBPROCESS_FALLBACK`) is strictly restricted to approved canonical developer fixtures.
+ConTree Cloud sandboxing was evaluated during initial cloud integration testing (last verified 2026-10-02), where the API returned `PERMISSION_DENIED (HTTP 403)` on `/sandboxes` because provided credentials lacked sandbox provisioning permissions. Rather than simulating or falsifying cloud execution, VulnTrace truthfully discloses this limitation. VulnTrace executes using verified local containment engines: Tier 1 rootless container isolation (`OCI_CONTAINER_ISOLATED`) is mandatory for all non-curated/untrusted code, while Tier 0 (`LOCAL_SUBPROCESS_FALLBACK`) is strictly restricted to approved canonical developer fixtures.
 
 ### Q9. What are VulnTrace's terminal states?
 VulnTrace enforces 7 mutually exclusive terminal verdicts:
@@ -310,6 +309,46 @@ pytest -v tests/
 
 ---
 
+## 6. VulnTrace-Bench Evaluation Results ([Technical Specification §5](docs/TECHNICAL_SPEC.md#5-vulntrace-bench-protocol--evidence-engine))
+
+<!-- VULNTRACE_BENCHMARK_TABLE_START -->
+### VulnTrace-Bench Summary Metrics (Ground-Truth Empirical Observations)
+
+- **Total Independent Cases Evaluated:** `10` (4 Real-World Repositories, 6 Curated Synthetic Fixtures)
+- **Authorized Sink Classes Covered:** `2` (Unsafe Deserialization, Path Traversal)
+- **Reachable Paths Identified:** `7 of 10 cases`
+- **Static False Positive / Already-Safe Suppressions:** `3 of 10 cases`
+- **Behavioral Reproductions Attempted:** `7 of 10 cases`
+- **Behavioral Reproductions Succeeded:** `5 of 7 attempted cases` (1 inconclusive: `CASE-RW-01`)
+- **Remediation Patches Synthesized & AST-Validated:** `5 of 5 generated patches` (NVIDIA Nemotron 3 Ultra)
+- **Preserved Legacy Single-Pass Remediations:** `5 of 10 cases` (`protocol_conformance: LEGACY_SINGLE_PASS`)
+- **Three-Repeat Protocol Verified Status:** `0 of 10 cases` (Zero fabricated repeats; all cases explicitly flagged as legacy single-pass pending live re-benchmarking)
+- **Regression Test Failures Induced:** `0 of 5 remediated cases` (0 regressions broken)
+- **Average Pipeline Latency:** `5012.42 ms`
+- **3-Class Acceptance Gate Status:** **FAIL / BLOCKED** *(Command Injection remains strictly frozen; 3-class requirement unsatisfied; M7 remains open)*
+
+### Benchmark Case-by-Case Breakdown
+
+| Case ID | Name / Description | Sink Class | Category | Reachability Verdict | Behavioral Verdict | Isolation Tier | Conformance Protocol |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **`contextual_reasoning`** | Contextual Reasoning & SafeLoader Hardening | Unsafe Deserialization | Curated Synthetic | `REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED` | `GREEN_STATE_VERIFIED` | `OCI_CONTAINER_ISOLATED` | Legacy Single-Pass (3x Pending) |
+| **`deep_callchain`** | Deep Call Chain (Multi-Directory) | Unsafe Deserialization | Curated Synthetic | `REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED` | `GREEN_STATE_VERIFIED` | `OCI_CONTAINER_ISOLATED` | Legacy Single-Pass (3x Pending) |
+| **`unreachable_dead_code`** | Unreachable Dead Code (False Positive Suppression) | Unsafe Deserialization | Curated Synthetic | `UNREACHABLE_FALSE_POSITIVE` | `UNREACHABLE_FALSE_POSITIVE` | `OCI_CONTAINER_ISOLATED` | Legacy Single-Pass (3x Pending) |
+| **`regression_sensitive`** | Regression-Sensitive Config Parser | Unsafe Deserialization | Curated Synthetic | `REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED` | `GREEN_STATE_VERIFIED` | `OCI_CONTAINER_ISOLATED` | Legacy Single-Pass (3x Pending) |
+| **`inconclusive_guard`** | Pre-Validation Guard (Truthful Inconclusive) | Unsafe Deserialization | Curated Synthetic | `REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED` | `INCONCLUSIVE` | `OCI_CONTAINER_ISOLATED` | Legacy Single-Pass (3x Pending) |
+| **`tar_path_traversal`** | Tar Slip Path Traversal Extractor | Path Traversal | Curated Synthetic | `REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED` | `GREEN_STATE_VERIFIED` | `OCI_CONTAINER_ISOLATED` | Legacy Single-Pass (3x Pending) |
+| **`CASE-RW-01`** | Flasgger Vulnerable Commit (163a753) | Unsafe Deserialization | Real World Repository | `REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED` | `INCONCLUSIVE` | `LOCAL_SUBPROCESS_FALLBACK` | Legacy Single-Pass (3x Pending) |
+| **`CASE-RW-02`** | Flasgger Patched Commit (ee62207) | Unsafe Deserialization | Real World Repository | `NO_VULNERABILITIES_FOUND` | `NO_VULNERABILITIES_FOUND` | `NOT_EXECUTED (STATIC_ANALYSIS)` | Legacy Single-Pass (3x Pending) |
+| **`CASE-RW-03`** | Cookiecutter False Positive Suppression | Unsafe Deserialization | Real World Repository | `UNREACHABLE_FALSE_POSITIVE` | `UNREACHABLE_FALSE_POSITIVE` | `NOT_EXECUTED (STATIC_ANALYSIS)` | Legacy Single-Pass (3x Pending) |
+| **`CASE-RW-04`** | Cloud Config Independent Microservice | Unsafe Deserialization | Real World Repository | `REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED` | `GREEN_STATE_VERIFIED` | `OCI_CONTAINER_ISOLATED` | Legacy Single-Pass (3x Pending) |
+
+> [!NOTE]
+> **Held-Out Generalizability Dataset Notice:**
+> In compliance with [Technical Specification §5.2](docs/TECHNICAL_SPEC.md#52-evaluation-protocol), candidate generalizability cases are documented in [`bench/HELDOUT.md`](bench/HELDOUT.md) (`aiohttp` CVE-2024-23334, `PyYAML` CVE-2020-1747, and `Tornado` CVE-2026-103263). These cases are strictly segregated from development tuning, are not executed during CI or development suites, and are excluded from the development-set metrics above.
+<!-- VULNTRACE_BENCHMARK_TABLE_END -->
+
+---
+
 ## 10. Disclosures & Formal Limitations
 
 1. **Isolation Tiers & Safety Boundaries:** VulnTrace implements a strictly tiered execution architecture detailed in [`docs/SAFETY.md`](docs/SAFETY.md):
@@ -326,4 +365,4 @@ VulnTrace is open-source software licensed under the **Apache License, Version 2
 
 ---
 
-**Built with pride by the Autonomous Security Engineering Team for the Nebius × NVIDIA Global AI Hackathon 2026.**
+**Built with pride by the Autonomous Security Engineering Team.**

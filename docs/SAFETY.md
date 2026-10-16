@@ -1,6 +1,6 @@
 # VulnTrace Studio — Safety Architecture & Isolation Boundaries
 
-**Canonical Reference:** `docs/VULNTRACE_STUDIO_SPEC.md` §4.6, §4.14, and Milestone M3 Acceptance Criteria.  
+**Canonical Reference:** `docs/TECHNICAL_SPEC.md` §4.6, §4.14, and Milestone M3 Acceptance Criteria.
 **Classification:** Public Security and Safety Policy.
 
 ---

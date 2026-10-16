@@ -1,8 +1,8 @@
-# Nebius × NVIDIA Developer Feedback Notes
+# Developer Feedback & Runtime Telemetry Notes
 
 **Project:** VulnTrace Studio  
 **Author:** Roshan (@ROSHAN0230)  
-**Track:** Coding & Agentic Engineering (Devpost Hackathon 2026)  
+**Scope:** Autonomous Vulnerability Reproduction & Verified Patching Substrate
 
 This document logs real runtime experiences, telemetry notes, and engineering feedback regarding Nebius AI Cloud, Token Factory, NVIDIA Nemotron models, and Tavily integration throughout development.
 
@@ -24,14 +24,14 @@ This document logs real runtime experiences, telemetry notes, and engineering fe
 ## 2. Cloud Sandboxes & Execution Isolation (ConTree / Token Factory Sandboxes)
 
 ### Observations:
-- **Sandbox API Access:** When attempting to provision disposable cloud sandboxes via the ConTree/Nebius Sandbox API (`/sandboxes`), requests returned `HTTP 403 PERMISSION_DENIED` with standard hackathon developer tokens.
+- **Sandbox API Access:** When attempting to provision disposable cloud sandboxes via the ConTree/Nebius Sandbox API (`/sandboxes`), requests returned `HTTP 403 PERMISSION_DENIED` with standard developer API credentials.
 - **Engineering Response:** Rather than simulating or mocking cloud execution, VulnTrace implemented an explicit dual-tier substrate:
   1. **Tier 0:** Local subprocess with Win32 Job Objects kernel process-tree termination, sanitized environment variable purging, and profile redirection.
   2. **Tier 1:** Rootless OCI Podman container running with `--network none`, `--cap-drop ALL`, resource limits (512MB RAM, 1.0 CPU, 128 PIDs), and anti-spoofing sentinels.
 - **Attestation & Policy:** The system reports `LOCAL_SUBPROCESS_FALLBACK` or `OCI_CONTAINER_ISOLATED` honestly in the signed evidence bundle, strictly preventing overclaiming.
 
 ### Suggestions for Improvement:
-- **Sandbox Provisioning IAM Permissions:** Provide hackathon participants with pre-configured IAM roles or explicit sandbox quota documentation to enable Tier 2 cloud sandbox execution directly within the pipeline.
+- **Sandbox Provisioning IAM Permissions:** Provide developers with pre-configured IAM roles or explicit sandbox quota documentation to enable Tier 2 cloud sandbox execution directly within the pipeline.
 
 ---
 

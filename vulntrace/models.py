@@ -247,6 +247,8 @@ class VerificationPipelineRequest(BaseModel):
     execution_backend: Optional[str] = None
     require_high_assurance: bool = False
     unsafe_local: bool = False
+    intent_requirement: Optional[str] = None
+    intent_spec: Optional[Dict[str, Any]] = None
 
 # --- Formal Evidence Schema (Phase 4) ---
 class RepositoryEvidence(BaseModel):

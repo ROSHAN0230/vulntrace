@@ -1,7 +1,7 @@
 # VulnTrace Target Environment Builder Audit & Real-Repo Evidence (Milestone M2)
 
 **Milestone:** M2 — Dedicated Target Environment Builder and First Real-Repository Evaluation  
-**Specification Reference:** `VULNTRACE_STUDIO_SPEC.md` §4.5, §4.4, Milestone M2  
+**Specification Reference:** `docs/TECHNICAL_SPEC.md` §4.5, §4.4, Milestone M2
 **Audit Date:** 2026-10-05  
 **Full Regression Test Suite:** **149 / 149 PASSED** (0 failures, 0 errors, 0 warnings in 293.94s)  
 **Linter Status:** `ruff check vulntrace/ tests/` — **All checks passed!**  

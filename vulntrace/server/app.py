@@ -61,6 +61,7 @@ from vulntrace.ingest.upload import ZipUploadGuard, IngestSecurityError
 from vulntrace.ingest.clone import GitCloneGuard
 from vulntrace.agent.scope_guard import ScopeGuard, RepairPlan
 from vulntrace.export.zip_export import ZipExporter
+from vulntrace.intent import parse_and_validate_intent
 
 
 # ---------------------------------------------------------------------------
@@ -574,78 +575,6 @@ async def stream_run_events(run_id: str, request: Request):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
-def parse_and_validate_intent(requirement: str) -> Dict[str, Any]:
-    text = requirement.strip()
-    lowered = text.lower()
-
-    vague_indicators = [
-        "make it better",
-        "make it secure",
-        "fix bugs",
-        "fix everything",
-        "clean up",
-        "improve code",
-        "do something",
-        "make better",
-        "fix it"
-    ]
-
-    is_vague = any(indicator in lowered for indicator in vague_indicators) or len(text) < 15
-
-    if is_vague and not ("cve-" in lowered or "yaml" in lowered or "sink" in lowered or "preserve" in lowered):
-        return {
-            "is_verifiable": False,
-            "warning": "UNVERIFIABLE: Requirement lacks concrete verifiable conditions or measurable acceptance tests. Please specify exact sinks, diff budgets, or preservation constraints.",
-            "parsed_spec": {
-                "must_fix": "Unspecified target sink or CVE",
-                "must_preserve": [],
-                "constraints": ["diff_budget <= 30 lines", "max_files <= 3"],
-                "acceptance_tests": []
-            }
-        }
-
-    import re
-    cve_match = re.search(r"CVE-\d{4}-\d+", text, re.IGNORECASE)
-    must_fix = cve_match.group(0).upper() if cve_match else "Surgical sink vulnerability"
-    if "yaml" in lowered:
-        must_fix += " (arbitrary YAML deserialization)"
-    elif "json" in lowered:
-        must_fix += " (unsafe deserialization)"
-
-    must_preserve = []
-    if "preserve" in lowered or "keep" in lowered:
-        if "regression" in lowered or "test" in lowered:
-            must_preserve.append("Existing unit & regression test suite")
-        if "custom" in lowered or "class" in lowered:
-            must_preserve.append("Custom loader/tag extensions")
-        if "api" in lowered:
-            must_preserve.append("Backward-compatible public API signatures")
-    if not must_preserve:
-        must_preserve.append("Existing repository regression test suite")
-
-    constraints = [
-        "diff_budget <= 30 lines",
-        "max_files <= 3 files",
-        "forbid arbitrary object instantiation"
-    ]
-
-    acceptance_tests = [
-        {"name": "test_cve_exploit_probe_blocked", "status": "REQUIRED", "oracle": "security_probe_rejection"},
-        {"name": "test_existing_regressions_pass", "status": "REQUIRED", "oracle": "pytest_baseline_invariant"}
-    ]
-
-    return {
-        "is_verifiable": True,
-        "warning": None,
-        "parsed_spec": {
-            "must_fix": must_fix,
-            "must_preserve": must_preserve,
-            "constraints": constraints,
-            "acceptance_tests": acceptance_tests
-        }
-    }
-
-
 @app.post("/runs/{run_id}/analyze")
 async def analyze_run(run_id: str):
     """Executes AST call-graph reachability traversal and threat intelligence query for the run workspace."""
@@ -767,7 +696,11 @@ async def record_intent(run_id: str, req: IntentRequest):
     if not record:
         raise HTTPException(status_code=404, detail="Run not found.")
 
-    intent_val = parse_and_validate_intent(req.requirement)
+    intent_val = parse_and_validate_intent(
+        req.requirement,
+        target_file=req.target_file,
+        vulnerable_symbol=req.vulnerable_symbol
+    )
 
     event_payload = {
         "requirement": req.requirement,
@@ -850,11 +783,30 @@ async def execute_run(run_id: str):
 
     target_file = approved_plan.files_to_touch[0] if (approved_plan and approved_plan.files_to_touch) else None
 
+    # Retrieve recorded intent from DB events if present
+    intent_req_text = None
+    intent_spec_data = None
+    events = current_db.get_events(run_id)
+    for ev in events:
+        if ev.get("stage") == "INTENT" and ev.get("payload"):
+            payload = ev["payload"]
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    pass
+            if isinstance(payload, dict):
+                intent_req_text = payload.get("requirement")
+                intent_spec_data = payload.get("parsed_spec")
+                break
+
     pipeline_req = VerificationPipelineRequest(
         repo_path=repo_dir,
         cve_id=cve_id,
         target_file=target_file,
-        use_nemotron=True
+        use_nemotron=True,
+        intent_requirement=intent_req_text,
+        intent_spec=intent_spec_data
     )
 
     try:

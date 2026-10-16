@@ -9,6 +9,9 @@ Coordinates the 6-step verification lifecycle:
 6. Regression Testing
 """
 
+import os
+import json
+import hashlib
 import time
 import uuid
 from pathlib import Path
@@ -495,9 +498,281 @@ class VerificationPipeline:
             harness_file.write_text(harness_res.harness_code, encoding="utf-8")
             emit("STAGE_COMPLETE", "HARNESS", f"Harness generated in {harness_res.latency_ms}ms targeting {resolved_target_file}:{resolved_target_func}()")
 
+            # Stage 1.5: Intent Acceptance Test Synthesis (M7 Phase 2 / Spec §4.9)
+            spec_obj = None
+            acceptance_test_file = None
+            acceptance_test_sha256 = None
+            intent_ev: Dict[str, Any] = {}
+
+            if req.intent_spec or req.intent_requirement:
+                emit("STAGE_START", "INTENT", "Evaluating repair intent and synthesizing acceptance test suite...")
+                from vulntrace.intent.spec import Spec
+                from vulntrace.intent.parser import IntentParser
+                from vulntrace.intent.synthesizer import AcceptanceTestSynthesizer
+                from vulntrace.intent.validator import IntentQualityValidator
+
+                if req.intent_spec:
+                    spec_obj = Spec.model_validate(req.intent_spec) if isinstance(req.intent_spec, dict) else req.intent_spec
+                elif req.intent_requirement:
+                    spec_obj = IntentParser.parse(
+                        req.intent_requirement,
+                        target_file=resolved_target_file,
+                        vulnerable_symbol=resolved_target_func
+                    )
+
+                if not spec_obj.is_verifiable:
+                    unverifiable_reason = spec_obj.unverifiable_reason or spec_obj.warning or "Requirement is unverifiable"
+                    emit("STATE_TRANSITION", "VERDICT", f"FINAL BEHAVIORAL VERDICT: UNVERIFIABLE ({unverifiable_reason})")
+                    dt_total = (time.perf_counter() - t0) * 1000.0
+                    verdict_rec = FinalVerdictRecord(
+                        terminal_state="UNVERIFIABLE",
+                        cve_id=req.cve_id,
+                        repo_path=str(source_repo),
+                        reason=f"Requirement cannot be verified: {unverifiable_reason}",
+                        timestamp=time.time(),
+                        evidence_summary={"cve_id": req.cve_id, "terminal_state": "UNVERIFIABLE", "unverifiable_reason": unverifiable_reason},
+                        is_safe_claim=False
+                    )
+                    return VerificationPipelineResponse(
+                        run_id=run_id,
+                        cve_id=req.cve_id,
+                        repo_path=str(source_repo),
+                        reachability_verdict=reachability_verdict,
+                        harness=harness_res,
+                        pre_patch_result=SandboxExecutionResult(
+                            exit_code=1,
+                            stdout="",
+                            stderr=unverifiable_reason,
+                            latency_ms=0.0,
+                            sentinel_created=False,
+                            reproduction_state="UNVERIFIABLE",
+                            parent_validated=False,
+                            sandbox_engine=backend.capabilities.tier.value,
+                            disposable_dir=str(disposable_dir)
+                        ),
+                        remediation=RemediationResponse(
+                            cve_id=req.cve_id,
+                            target_file=resolved_target_file,
+                            engine="SKIPPED",
+                            diff="",
+                            explanation="Skipped remediation: intent is unverifiable",
+                            latency_ms=0.0,
+                            success=False,
+                            validation_status="UNVERIFIABLE"
+                        ),
+                        post_patch_result=SandboxExecutionResult(
+                            exit_code=1,
+                            stdout="",
+                            stderr=unverifiable_reason,
+                            latency_ms=0.0,
+                            sentinel_created=False,
+                            reproduction_state="UNVERIFIABLE",
+                            parent_validated=False,
+                            sandbox_engine=backend.capabilities.tier.value,
+                            disposable_dir=str(disposable_dir)
+                        ),
+                        regression_tests={"passed": False, "test_count": 0, "error": "SKIPPED_DUE_TO_UNVERIFIABLE"},
+                        final_behavioral_verdict="UNVERIFIABLE",
+                        structured_evidence={
+                            "failure_classification": "UNVERIFIABLE",
+                            "unverifiable_reason": unverifiable_reason,
+                            "intent_spec": spec_obj.model_dump(),
+                            "threat_intel": threat_intel.model_dump() if threat_intel else None,
+                            "token_ledger": token_ledger.get_summary().model_dump() if token_ledger else None
+                        },
+                        verdict_record=verdict_rec,
+                        environment=env_evidence,
+                        sandbox_engine=backend.capabilities.tier.value,
+                        cloud_status="PERMISSION_DENIED (HTTP 403)",
+                        total_pipeline_ms=round(dt_total, 2),
+                        isolation_tier=backend.capabilities.tier.value,
+                        isolation_attestation=attestation.model_dump(),
+                        assurance_level=assurance_level.value,
+                        policy_decision=policy_decision.model_dump(),
+                        threat_intel=threat_intel,
+                        token_ledger=token_ledger.get_summary() if token_ledger else None
+                    )
+
+                acceptance_code = AcceptanceTestSynthesizer.synthesize_test_module(
+                    spec_obj,
+                    target_symbol=resolved_target_func,
+                    target_file=resolved_target_file
+                )
+                is_valid, ast_errors = IntentQualityValidator.validate_test_code(
+                    acceptance_code,
+                    target_symbol=resolved_target_func
+                )
+                if not is_valid:
+                    unverifiable_reason = f"Acceptance test failed AST quality gates: {ast_errors}"
+                    emit("ERROR", "INTENT", unverifiable_reason)
+                    dt_total = (time.perf_counter() - t0) * 1000.0
+                    verdict_rec = FinalVerdictRecord(
+                        terminal_state="UNVERIFIABLE",
+                        cve_id=req.cve_id,
+                        repo_path=str(source_repo),
+                        reason=unverifiable_reason,
+                        timestamp=time.time(),
+                        evidence_summary={"cve_id": req.cve_id, "terminal_state": "UNVERIFIABLE", "unverifiable_reason": unverifiable_reason},
+                        is_safe_claim=False
+                    )
+                    return VerificationPipelineResponse(
+                        run_id=run_id,
+                        cve_id=req.cve_id,
+                        repo_path=str(source_repo),
+                        reachability_verdict=reachability_verdict,
+                        harness=harness_res,
+                        pre_patch_result=SandboxExecutionResult(
+                            exit_code=1,
+                            stdout="",
+                            stderr=unverifiable_reason,
+                            latency_ms=0.0,
+                            sentinel_created=False,
+                            reproduction_state="UNVERIFIABLE",
+                            parent_validated=False,
+                            sandbox_engine=backend.capabilities.tier.value,
+                            disposable_dir=str(disposable_dir)
+                        ),
+                        remediation=RemediationResponse(
+                            cve_id=req.cve_id,
+                            target_file=resolved_target_file,
+                            engine="SKIPPED",
+                            diff="",
+                            explanation="Skipped remediation: AST validation failed",
+                            latency_ms=0.0,
+                            success=False,
+                            validation_status="UNVERIFIABLE"
+                        ),
+                        post_patch_result=SandboxExecutionResult(
+                            exit_code=1,
+                            stdout="",
+                            stderr=unverifiable_reason,
+                            latency_ms=0.0,
+                            sentinel_created=False,
+                            reproduction_state="UNVERIFIABLE",
+                            parent_validated=False,
+                            sandbox_engine=backend.capabilities.tier.value,
+                            disposable_dir=str(disposable_dir)
+                        ),
+                        regression_tests={"passed": False, "test_count": 0, "error": "SKIPPED_DUE_TO_UNVERIFIABLE"},
+                        final_behavioral_verdict="UNVERIFIABLE",
+                        structured_evidence={
+                            "failure_classification": "UNVERIFIABLE",
+                            "unverifiable_reason": unverifiable_reason,
+                            "intent_spec": spec_obj.model_dump(),
+                            "threat_intel": threat_intel.model_dump() if threat_intel else None,
+                            "token_ledger": token_ledger.get_summary().model_dump() if token_ledger else None
+                        },
+                        verdict_record=verdict_rec,
+                        environment=env_evidence,
+                        sandbox_engine=backend.capabilities.tier.value,
+                        cloud_status="PERMISSION_DENIED (HTTP 403)",
+                        total_pipeline_ms=round(dt_total, 2),
+                        isolation_tier=backend.capabilities.tier.value,
+                        isolation_attestation=attestation.model_dump(),
+                        assurance_level=assurance_level.value,
+                        policy_decision=policy_decision.model_dump(),
+                        threat_intel=threat_intel,
+                        token_ledger=token_ledger.get_summary() if token_ledger else None
+                    )
+
+                # Write acceptance test outside patched tree and set read-only permissions
+                acceptance_test_file = "_acceptance_test.py"
+                acceptance_path = disposable_dir / acceptance_test_file
+                acceptance_path.write_bytes(acceptance_code.encode("utf-8"))
+                try:
+                    os.chmod(acceptance_path, 0o444)
+                except Exception:
+                    pass
+                acceptance_test_sha256 = hashlib.sha256(acceptance_path.read_bytes()).hexdigest()
+                intent_ev["acceptance_test_file"] = acceptance_test_file
+                intent_ev["acceptance_test_sha256"] = acceptance_test_sha256
+                intent_ev["spec"] = spec_obj.model_dump()
+                intent_ev["requirement"] = req.intent_requirement or spec_obj.must_fix
+                emit("STAGE_COMPLETE", "INTENT", f"Acceptance test synthesized ({acceptance_test_file}, sha256={acceptance_test_sha256[:12]}...)")
+
             # Stage 2: Pre-Patch Sandbox Execution (Expect RED STATE)
             emit("STAGE_START", "REPRODUCTION", f"Executing pre-patch verification harness in isolated backend ({backend.capabilities.tier.value})...")
             pre_res = await _run_backend_script(harness_script_name, harness_res.sentinel_filename, "REPRODUCTION")
+
+            # Execute Pre-Patch Acceptance Test Suite (Spec §4.9)
+            if pre_res.reproduction_state == "RED_STATE_REPRODUCED" and acceptance_test_file:
+                emit("STAGE_START", "ACCEPTANCE", f"Executing pre-patch acceptance test suite ({acceptance_test_file}) in {backend.capabilities.tier.value}...")
+                pre_acceptance = await backend.run_regression_suite(workspace_id=workspace_id, test_file=acceptance_test_file)
+                pre_out = (pre_acceptance.get("stdout") or "") + "\n" + (pre_acceptance.get("stderr") or "")
+
+                # 1. Telemetry and canary file inspection
+                telemetry_file = disposable_dir / "_acceptance_telemetry.json"
+                canary_file = disposable_dir / "_canary_acceptance.marker"
+
+                telemetry_data: Dict[str, Any] = {}
+                telemetry_valid = False
+                if telemetry_file.exists():
+                    try:
+                        content = telemetry_file.read_text(encoding="utf-8")
+                        telemetry_data = json.loads(content)
+                        if isinstance(telemetry_data, dict) and "probe_blocked" in telemetry_data and "canary_created" in telemetry_data:
+                            telemetry_valid = True
+                    except Exception:
+                        telemetry_valid = False
+
+                parent_canary_observed = canary_file.exists()
+                telemetry_canary_observed = telemetry_data.get("canary_created") is True
+                probe_blocked = telemetry_data.get("probe_blocked") is True
+                exc_type = telemetry_data.get("exception_type")
+
+                has_import_error = any(e in pre_out for e in ("ImportError", "ModuleNotFoundError", "SyntaxError", "No module named"))
+                has_parser_error = any(e in pre_out for e in ("ParserError", "ScannerError")) or exc_type in ("ParserError", "ScannerError")
+
+                # Safeguard 1 & 2: Valid Vulnerable RED validation
+                pres_passed = "test_preserve_custom_tags PASSED" in pre_out if ("test_preserve_custom_tags" in (acceptance_code or "")) else True
+                pos_control_passed = "test_standard_benign_config_loads_cleanly PASSED" in pre_out if ("test_standard_benign_config_loads_cleanly" in (acceptance_code or "")) else True
+
+                is_valid_red = False
+                if has_import_error or has_parser_error:
+                    emit("ERROR", "ACCEPTANCE", f"Pre-patch acceptance test failed due to import/parser error: {pre_out[:150]}")
+                    intent_ev["pre_patch_error"] = "IMPORT_OR_PARSER_ERROR"
+                elif not telemetry_valid:
+                    emit("ERROR", "ACCEPTANCE", "Pre-patch acceptance test failed: missing or malformed telemetry record.")
+                    intent_ev["pre_patch_error"] = "MALFORMED_TELEMETRY"
+                elif parent_canary_observed != telemetry_canary_observed:
+                    emit("ERROR", "ACCEPTANCE", f"Pre-patch acceptance test rejected: contradictory canary evidence (parent={parent_canary_observed}, telemetry={telemetry_canary_observed}).")
+                    intent_ev["pre_patch_error"] = "CONTRADICTORY_CANARY_EVIDENCE"
+                elif not parent_canary_observed or not telemetry_canary_observed:
+                    emit("ERROR", "ACCEPTANCE", "Pre-patch acceptance test rejected: probe failed to demonstrate unsafe behavior (canary was not created).")
+                    intent_ev["pre_patch_error"] = "CANARY_NOT_CREATED"
+                elif probe_blocked:
+                    emit("ERROR", "ACCEPTANCE", f"Pre-patch acceptance test rejected: probe was unexpectedly blocked pre-patch ({exc_type}).")
+                    intent_ev["pre_patch_error"] = "PROBE_PREMATURELY_BLOCKED"
+                elif not pres_passed or not pos_control_passed:
+                    emit("ERROR", "ACCEPTANCE", "Pre-patch acceptance test rejected: baseline functional preservation or benign control failed.")
+                    intent_ev["pre_patch_error"] = "PRESERVATION_BASELINE_FAILED"
+                elif "UNSAFE_PROBE_NOT_BLOCKED" in pre_out or "test_security_probe_rejection FAILED" in pre_out:
+                    is_valid_red = True
+
+                intent_ev["pre_patch_telemetry"] = telemetry_data
+                intent_ev["pre_patch_red_confirmed"] = is_valid_red
+                intent_ev["canary_created_pre_patch"] = parent_canary_observed and telemetry_canary_observed
+                intent_ev["probe_blocked_pre_patch"] = probe_blocked
+                intent_ev["exception_type_pre_patch"] = exc_type
+                intent_ev["pre_patch_result"] = pre_acceptance
+                intent_ev["acceptance_test_sha256"] = acceptance_test_sha256
+
+                if is_valid_red:
+                    emit("STATE_TRANSITION", "ACCEPTANCE", f"PRE-PATCH ACCEPTANCE RED CONFIRMED: Target demonstrated vulnerable behavior (canary_created=True, probe_blocked=False, exc={exc_type}).")
+                else:
+                    emit("STATE_TRANSITION", "ACCEPTANCE", f"PRE-PATCH ACCEPTANCE INCONCLUSIVE: Target output did not qualify as valid RED ({intent_ev.get('pre_patch_error')}).")
+
+                # Clean canary and telemetry files from workspace prior to remediation
+                if canary_file.exists():
+                    try:
+                        canary_file.unlink()
+                    except Exception:
+                        pass
+                if telemetry_file.exists():
+                    try:
+                        telemetry_file.unlink()
+                    except Exception:
+                        pass
 
             # Check if pre-patch state could not reproduce (INCONCLUSIVE / GUARD BLOCKED / REJECTED)
             if pre_res.reproduction_state != "RED_STATE_REPRODUCED":
@@ -779,6 +1054,72 @@ class VerificationPipeline:
             else:
                 emit("STATE_TRANSITION", "VERIFICATION", f"POST-PATCH VERIFICATION FAILED: {post_res.reproduction_state} ({post_res.validation_notes})")
 
+            # Execute Post-Patch Acceptance Test Suite (Spec §4.9)
+            if acceptance_test_file:
+                acceptance_path = disposable_dir / acceptance_test_file
+                if not acceptance_path.exists():
+                    raise PermissionError("Acceptance test file was deleted during remediation!")
+                current_sha = hashlib.sha256(acceptance_path.read_bytes()).hexdigest()
+                if current_sha != acceptance_test_sha256:
+                    raise PermissionError(f"Acceptance test integrity violation: test SHA changed from {acceptance_test_sha256} to {current_sha}")
+
+                emit("STAGE_START", "ACCEPTANCE", f"Executing post-patch acceptance test suite ({acceptance_test_file}) in {backend.capabilities.tier.value}...")
+                post_acceptance = await backend.run_regression_suite(workspace_id=workspace_id, test_file=acceptance_test_file)
+                post_out = (post_acceptance.get("stdout") or "") + "\n" + (post_acceptance.get("stderr") or "")
+
+                # 1. Telemetry and canary file inspection
+                telemetry_file = disposable_dir / "_acceptance_telemetry.json"
+                canary_file = disposable_dir / "_canary_acceptance.marker"
+
+                post_telemetry: Dict[str, Any] = {}
+                telemetry_valid = False
+                if telemetry_file.exists():
+                    try:
+                        post_telemetry = json.loads(telemetry_file.read_text(encoding="utf-8"))
+                        if isinstance(post_telemetry, dict) and "probe_blocked" in post_telemetry and "canary_created" in post_telemetry:
+                            telemetry_valid = True
+                    except Exception:
+                        telemetry_valid = False
+
+                parent_canary_observed = canary_file.exists()
+                telemetry_canary_observed = post_telemetry.get("canary_created") is True
+                probe_blocked = post_telemetry.get("probe_blocked") is True
+                exc_type = post_telemetry.get("exception_type")
+
+                post_passed = post_acceptance.get("passed", False)
+
+                # Safeguard 1 & 2: Valid Repaired GREEN validation
+                # Requires:
+                # - Entire acceptance test module passed
+                # - Valid telemetry record present
+                # - Exact expected constructor-blocking exception (yaml.constructor.ConstructorError)
+                # - Probe was blocked: probe_blocked=True
+                # - Canary was NOT created: both in telemetry and independently observed by parent
+                # - Custom tags preserved
+                # - Benign configuration passed
+                exact_exception_matched = exc_type in ("yaml.constructor.ConstructorError", "ConstructorError")
+                canary_absent = (not parent_canary_observed) and (not telemetry_canary_observed)
+                pres_passed = "test_preserve_custom_tags PASSED" in post_out if ("test_preserve_custom_tags" in (acceptance_code or "")) else True
+                pos_control_passed = "test_standard_benign_config_loads_cleanly PASSED" in post_out if ("test_standard_benign_config_loads_cleanly" in (acceptance_code or "")) else True
+                sec_blocked = post_passed and telemetry_valid and probe_blocked and exact_exception_matched and canary_absent
+
+                is_valid_green = sec_blocked and pres_passed and pos_control_passed
+
+                intent_ev["post_patch_telemetry"] = post_telemetry
+                intent_ev["post_patch_result"] = post_acceptance
+                intent_ev["post_patch_green_confirmed"] = is_valid_green
+                intent_ev["security_blocked"] = sec_blocked
+                intent_ev["canary_created_post_patch"] = parent_canary_observed or telemetry_canary_observed
+                intent_ev["probe_blocked_post_patch"] = probe_blocked
+                intent_ev["exception_type_post_patch"] = exc_type
+                intent_ev["preservation_verified"] = pres_passed
+                intent_ev["positive_control_passed"] = pos_control_passed
+
+                if is_valid_green:
+                    emit("STATE_TRANSITION", "ACCEPTANCE", "POST-PATCH ACCEPTANCE GREEN CONFIRMED: Exact ConstructorError block verified, canary absent, custom tags & benign config passed.")
+                else:
+                    emit("STATE_TRANSITION", "ACCEPTANCE", f"POST-PATCH ACCEPTANCE FAILED: sec_blocked={sec_blocked}, pres_passed={pres_passed}, pos_control={pos_control_passed}, canary_absent={canary_absent}, exc={exc_type}")
+
             # Stage 5: Regression Testing
             emit("STAGE_START", "REGRESSION", "Executing regression test suite (pytest)...")
             regression_res = await backend.run_regression_suite(workspace_id)
@@ -863,6 +1204,19 @@ class VerificationPipeline:
                     "latency_ms": remediation_res.latency_ms,
                     "validation_status": remediation_res.validation_status
                 }
+            if intent_ev:
+                pipeline_evidence["intent_verification"] = intent_ev
+                if not intent_ev.get("post_patch_green_confirmed", True):
+                    if not intent_ev.get("preservation_verified", True):
+                        verdict_record.terminal_state = "REGRESSION_FAILURE"
+                        verdict_record.reason = "Custom tag preservation failed post-patch under acceptance test suite"
+                        final_verdict = "REGRESSION_FAILURE"
+                    elif not intent_ev.get("security_blocked", True):
+                        verdict_record.terminal_state = "RED_STATE_PERSISTS"
+                        verdict_record.reason = "Vulnerability still active post-patch under acceptance test suite"
+                        final_verdict = "RED_STATE_PERSISTS"
+                    verdict_record.evidence_summary["terminal_state"] = final_verdict
+                    verdict_record.evidence_summary["regression_passed"] = False
 
             pipeline_evidence["environment"] = env_evidence.model_dump()
             return VerificationPipelineResponse(

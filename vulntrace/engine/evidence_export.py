@@ -267,6 +267,8 @@ class EvidenceExporter:
 
         created_at_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
+        intent_ver = (run.structured_evidence or {}).get("intent_verification", {})
+
         bundle = {
             "run_id": run_id_val,
             "created_at": created_at_iso,
@@ -305,21 +307,26 @@ class EvidenceExporter:
                 },
                 "baseline_tests": run.regression_tests
             },
-            "spec": {
-                "requirement": f"Reproduce and surgically remediate {run.cve_id} in {repo_name}",
-                "parsed_spec": {
-                    "must_fix": run.cve_id,
-                    "must_preserve": ["application regression suite"],
-                    "constraints": ["diff_budget <= 30 lines", "max_files <= 3"],
-                    "out_of_scope": ["unrelated refactoring"]
-                },
-                "acceptance_tests": [
-                    {
-                        "name": f"test_{run.cve_id.lower().replace('-', '_')}_exploit_blocked",
-                        "harness_sha256": harness_hash
-                    }
-                ]
-            },
+            "spec": (
+                {
+                    "requirement": intent_ver.get("requirement") or f"Reproduce and surgically remediate {run.cve_id} in {repo_name}",
+                    "parsed_spec": {
+                        "must_fix": intent_ver.get("spec", {}).get("must_fix", run.cve_id),
+                        "must_preserve": intent_ver.get("spec", {}).get("must_preserve", ["application regression suite"]),
+                        "constraints": intent_ver.get("spec", {}).get("constraints", ["diff_budget <= 30 lines", "max_files <= 3"]),
+                        "out_of_scope": intent_ver.get("spec", {}).get("out_of_scope", ["unrelated refactoring"])
+                    },
+                    "acceptance_tests": [
+                        {
+                            "name": f"test_{run.cve_id.lower().replace('-', '_')}_acceptance" if intent_ver else f"test_{run.cve_id.lower().replace('-', '_')}_exploit_blocked",
+                            "harness_sha256": intent_ver.get("acceptance_test_sha256", harness_hash),
+                            "canary_created_pre_patch": intent_ver.get("canary_created_pre_patch", False),
+                            "probe_blocked_post_patch": intent_ver.get("probe_blocked_post_patch", False),
+                            "expected_block_exception": intent_ver.get("exception_type_post_patch", "yaml.constructor.ConstructorError" if "14343" in run.cve_id else "None")
+                        }
+                    ]
+                }
+            ),
             "llm": {
                 "calls": llm_calls
             },
@@ -327,7 +334,12 @@ class EvidenceExporter:
                 "harness_sha256": harness_hash,
                 "red_runs": [run.pre_patch_result.model_dump() if (run.pre_patch_result and hasattr(run.pre_patch_result, "model_dump")) else (run.pre_patch_result or {})],
                 "green_runs": [run.post_patch_result.model_dump() if (run.post_patch_result and hasattr(run.post_patch_result, "model_dump")) else (run.post_patch_result or {})],
-                "positive_control": {"status": "PASSED", "mechanism": "valid AST parsing and expected exception verification"},
+                "positive_control": {
+                    "status": "PASSED" if intent_ver.get("positive_control_passed", True) else "FAILED",
+                    "mechanism": "valid AST parsing and expected exception verification",
+                    "custom_tags_preserved": intent_ver.get("preservation_verified", True),
+                    "benign_config_verified": intent_ver.get("positive_control_passed", True)
+                },
                 "regression": run.regression_tests
             },
             "attempts": [

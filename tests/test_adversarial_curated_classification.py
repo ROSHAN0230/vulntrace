@@ -547,9 +547,9 @@ class TestDynamicRegistryAuthorityAmendments:
             assert is_curated_fixture(broad_dir) is False
 
     def test_canonical_fixtures_intact_and_exact_count(self):
-        """get_canonical_fixtures() returns exactly the 10 authorized canonical fixtures."""
+        """get_canonical_fixtures() returns exactly the 12 authorized canonical fixtures (including M7 path traversal)."""
         canonical = TrustedFixtureRegistry.get_canonical_fixtures()
-        assert len(canonical) == 10
+        assert len(canonical) == 12
         for p in canonical:
             assert p.exists()
             assert p.is_dir()

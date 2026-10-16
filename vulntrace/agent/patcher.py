@@ -21,15 +21,44 @@ class RemediationPatcher:
     def _ast_deterministic_patch(cls, orig_code: str, vulnerable_call: str = "yaml.load") -> str:
         """
         Deterministic AST codemod replacing unsafe calls (yaml.load, yaml.full_load, yaml.unsafe_load)
-        with their secure counterparts (yaml.safe_load).
-        Guaranteed to produce syntactically valid, minimal code changes.
+        with their secure counterparts (yaml.safe_load or Loader=<CustomSafeLoader>).
+        Guaranteed to produce syntactically valid, minimal code changes preserving custom loaders.
         """
+        tree = ast.parse(orig_code)
+
+        # Detect if target module defines a custom SafeLoader subclass (e.g. AppSafeLoader)
+        custom_safe_loader = None
+        for n in ast.walk(tree):
+            if isinstance(n, ast.ClassDef):
+                for base in n.bases:
+                    if (isinstance(base, ast.Attribute) and base.attr == "SafeLoader") or (isinstance(base, ast.Name) and base.id == "SafeLoader"):
+                        custom_safe_loader = n.name
+                        break
+                if custom_safe_loader:
+                    break
+
         class SafeLoadTransformer(ast.NodeTransformer):
             def visit_Call(self, node: ast.Call):
                 # Match yaml.load, yaml.full_load, yaml.unsafe_load
                 if isinstance(node.func, ast.Attribute):
                     if node.func.attr in ["load", "full_load", "unsafe_load"]:
                         if isinstance(node.func.value, ast.Name) and node.func.value.id == "yaml":
+                            if custom_safe_loader:
+                                # Retain yaml.load with verified custom SafeLoader to preserve custom tags
+                                return ast.Call(
+                                    func=ast.Attribute(
+                                        value=ast.Name(id="yaml", ctx=ast.Load()),
+                                        attr="load",
+                                        ctx=ast.Load()
+                                    ),
+                                    args=node.args[:1],
+                                    keywords=[
+                                        ast.keyword(
+                                            arg="Loader",
+                                            value=ast.Name(id=custom_safe_loader, ctx=ast.Load())
+                                        )
+                                    ]
+                                )
                             new_func = ast.Attribute(
                                 value=ast.Name(id="yaml", ctx=ast.Load()),
                                 attr="safe_load",
@@ -40,7 +69,6 @@ class RemediationPatcher:
                             return ast.Call(func=new_func, args=new_args, keywords=[])
                 return self.generic_visit(node)
 
-        tree = ast.parse(orig_code)
         transformer = SafeLoadTransformer()
         patched_tree = transformer.visit(tree)
         ast.fix_missing_locations(patched_tree)

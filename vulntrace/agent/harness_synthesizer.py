@@ -86,6 +86,18 @@ class HarnessSynthesizer:
         "check": lambda r: isinstance(r.get("nested"), dict) and r["nested"].get("workers") == 4
     }
 ]"""
+        elif oracle and oracle.sink_class.value == "path_traversal":
+            import_block = oracle.get_harness_import_block()
+            payload_expr = f'str(__import__("vulntrace.sinks.path_traversal", fromlist=["TarPathTraversalOracle"]).TarPathTraversalOracle.create_traversal_archive(Path("traversal_probe.tar"), "{sentinel_name}"))'
+            benign_suite_code = """[
+    {
+        "id": "benign_archive_extraction",
+        "input": str(__import__("vulntrace.sinks.path_traversal", fromlist=["TarPathTraversalOracle"]).TarPathTraversalOracle.create_benign_archive(Path("benign_test.tar"))),
+        "req_type": (dict, type(None)),
+        "req_keys": [],
+        "check": lambda r: (Path("extracted") / "config.json").exists()
+    }
+]"""
         elif is_command_exec or is_code_eval:
             payload_expr = f'"__import__(\'pathlib\').Path(\'{sentinel_name}\').touch()"'
             import_block = """sec_block_types = (ValueError, PermissionError, TypeError)"""
@@ -214,6 +226,10 @@ def _invoke_target(target_fn, inp):
                             return item
                     return res_tuple
                 return res_tuple
+            elif any(k in p1 for k in ["dest", "dir", "path", "out", "target", "to", "extract_to"]):
+                dest_dir = Path("extracted")
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                return target_fn(inp, str(dest_dir))
     return target_fn(inp)
 
 sentinel = Path("{sentinel_name}")
@@ -271,7 +287,7 @@ except sec_block_types as sec_err:
                 c_id = case["id"]
                 r = _invoke_target({func_name}, case["input"])
 
-                if r is None:
+                if r is None and type(None) not in (case["req_type"] if isinstance(case["req_type"], tuple) else (case["req_type"],)):
                     raise ValueError(f"Contract '{{c_id}}' failed: returned None")
 
                 expected_t = case["req_type"]

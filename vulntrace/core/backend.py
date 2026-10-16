@@ -140,14 +140,18 @@ class TrustedFixtureRegistry:
         "tests/fixtures/deserialization/pickle_vulnerable",
         "tests/fixtures/deserialization/yaml_fixed",
         "tests/fixtures/deserialization/yaml_vulnerable",
+        "tests/fixtures/path_traversal/tar_fixed",
+        "tests/fixtures/path_traversal/tar_vulnerable",
     )
 
     # Broad in-project container directories that must never qualify as individual fixture roots
     FORBIDDEN_BROAD_IN_PROJECT_RELPATHS: Tuple[str, ...] = (
+        "bench",
         "benchmarks",
         "tests",
         "tests/fixtures",
         "tests/fixtures/deserialization",
+        "tests/fixtures/path_traversal",
         "vulntrace",
         "ui",
         "docs",

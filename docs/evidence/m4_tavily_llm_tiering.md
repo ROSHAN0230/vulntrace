@@ -1,6 +1,6 @@
 # Milestone M4 Evidence: Tavily Runtime Intel + LLM Tiering + Token Accounting
 
-**Canonical Master Specification:** `VULNTRACE_STUDIO_SPEC.md` §4.1, §4.7, §4.8, §4.11, §6  
+**Canonical Master Specification:** `docs/TECHNICAL_SPEC.md` §4.1, §4.7, §4.8, §4.11, §6
 **Milestone:** M4 (Tavily Runtime Intel + LLM Tiering)  
 **Status:** **ACCEPTED & CLOSED**  
 **Date:** 2026-10-06  
