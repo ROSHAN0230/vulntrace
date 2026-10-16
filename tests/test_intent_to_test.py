@@ -396,24 +396,39 @@ def test_execution_boundary_refuses_tier0_for_untrusted_generated_tests(tmp_path
 def test_execution_boundary_selects_tier1_container(tmp_path):
     """
     Quality Gate 6: Verifies that validator resolves Tier 1 Container backend when available
-    for non-curated code.
+    for non-curated code, or fails closed with PermissionError when container is unavailable.
     """
     untrusted_repo = tmp_path / "user_submitted_repo"
     untrusted_repo.mkdir()
     (untrusted_repo / "app.py").write_text("def parse_config(data): return data\n", encoding="utf-8")
 
     validator = IntentQualityValidator()
-    resolved_backend = validator.resolve_execution_backend(untrusted_repo)
 
     # In an environment with Podman (like WSL2), it resolves to ContainerExecutionBackend
     # If container is not available on this host, it fails closed rather than silently falling back to Tier 0.
     if ContainerExecutionBackend().is_available():
+        resolved_backend = validator.resolve_execution_backend(untrusted_repo)
         assert isinstance(resolved_backend, ContainerExecutionBackend)
         assert resolved_backend.capabilities.tier == IsolationTier.OCI_CONTAINER_ISOLATED
     else:
-        # If container is unavailable, attempting execution must fail closed
-        with pytest.raises(PermissionError):
-            validator.route_test_execution(untrusted_repo)
+        # If container is unavailable, attempting resolution must fail closed
+        with pytest.raises(PermissionError) as exc_info:
+            validator.resolve_execution_backend(untrusted_repo)
+        assert "requiring Isolation Tier 1" in str(exc_info.value)
+
+
+def test_execution_boundary_fails_closed_when_container_unavailable(tmp_path, monkeypatch):
+    """Quality Gate 6: Deterministically asserts fail-closed behavior when container runtime is unavailable."""
+    monkeypatch.setattr(ContainerExecutionBackend, "is_available", lambda self: False)
+
+    untrusted_repo = tmp_path / "user_submitted_repo"
+    untrusted_repo.mkdir()
+    (untrusted_repo / "app.py").write_text("def parse_config(data): return data\n", encoding="utf-8")
+
+    validator = IntentQualityValidator()
+    with pytest.raises(PermissionError) as exc_info:
+        validator.resolve_execution_backend(untrusted_repo)
+    assert "requiring Isolation Tier 1" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
