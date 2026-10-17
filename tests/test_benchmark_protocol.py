@@ -833,16 +833,19 @@ def test_control_flow_and_api_accounting_semantics():
     assert "(7) Degraded Pipeline Outcomes" in table_md
     assert "(8) Historical Telemetry Limitations" in table_md
 
-    # 2. Static Code Verification: TokenFactoryClient Cache-Miss Fall-Through
+    # 2. Static Code Verification: TokenFactoryClient Fail-Closed Control Flow
     tf_source = inspect.getsource(llm_client_mod.TokenFactoryClient.generate_chat)
-    assert "if not LLMCassetteManager.is_live_enabled() or not self.api_key:" in tf_source
-    assert "if not self.api_key:" in tf_source
+    assert "if not is_live or not self.api_key:" in tf_source
+    assert "if not is_live:" in tf_source
+    assert "Offline mode: No cassette found" in tf_source
     assert "# 2. Live HTTP Call" in tf_source
 
-    # 3. Static Code Verification: TavilyClient Cache-Miss Fall-Through
+    # 3. Static Code Verification: TavilyClient Fail-Closed Control Flow
     tavily_source = inspect.getsource(tavily_client_mod.TavilyClient.search_with_relevance)
-    assert "if not IntelCassetteManager.is_live_enabled() or not self.api_key:" in tavily_source
-    assert "status_code=401" in tavily_source
+    assert "if not is_live or not self.api_key:" in tavily_source
+    assert "if not is_live:" in tavily_source
+    assert "status_code=412" in tavily_source
+    assert "Offline mode: No threat intelligence cassette found" in tavily_source
     assert "await client.post(self.ENDPOINT, json=payload)" in tavily_source
 
     # 4. Static Code Verification: Benchmark Runner Case-Dispatch Paths

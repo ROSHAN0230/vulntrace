@@ -86,8 +86,10 @@ class TokenFactoryClient:
         model_name = get_model_for_tier(tier)
         fingerprint = LLMCassetteManager.compute_fingerprint(model_name, messages)
 
+        is_live = LLMCassetteManager.is_live_enabled()
+
         # 1. Offline Cassette Replay (when live calls disabled or no API key)
-        if not LLMCassetteManager.is_live_enabled() or not self.api_key:
+        if not is_live or not self.api_key:
             cassette_data = LLMCassetteManager.load_cassette(fingerprint)
             if not cassette_data:
                 # Search by exact model name, stage, or tier in cassette store
@@ -111,6 +113,19 @@ class TokenFactoryClient:
                     success=True
                 )
                 return content, rec
+
+            # Fail closed when live calls are disabled, regardless of whether API key is configured
+            if not is_live:
+                err_msg = f"Offline mode: No cassette found for {model_name} (fingerprint {fingerprint[:8]}). Live calls disabled."
+                rec = self.ledger.record_call(
+                    stage=stage,
+                    model=model_name,
+                    tier=tier,
+                    latency_ms=0.0,
+                    success=False,
+                    error=err_msg
+                )
+                return "", rec
 
             if not self.api_key:
                 err_msg = "Nebius Token Factory API key not configured and no offline cassette found."
