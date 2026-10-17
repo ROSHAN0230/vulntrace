@@ -357,7 +357,7 @@ def generate_markdown_table(results: List[Dict[str, Any]]) -> str:
         TABLE_START_MARKER,
         "### VulnTrace-Bench Summary Metrics (Ground-Truth Empirical Observations)",
         "",
-        f"- **Total Independent Cases Evaluated:** `{total_cases}` (4 Real-World Repositories, 6 Curated Synthetic Fixtures)",
+        f"- **Total Benchmark Entries Evaluated:** `{total_cases}` (4 Real-World Revision Evaluations across 3 Distinct Repositories, 6 Curated Synthetic Fixtures)",
         "- **Authorized Sink Classes Covered:** `2` (Unsafe Deserialization, Path Traversal)",
         f"- **Reachable Paths Identified:** `{reachable_count} of {total_cases} cases`",
         f"- **Static False Positive / Already-Safe Suppressions:** `{static_suppression_count} of {total_cases} cases`",
@@ -388,6 +388,18 @@ def generate_markdown_table(results: List[Dict[str, Any]]) -> str:
         lines.append(f"| **`{cid}`** | {name} | {sink} | {cat} | `{reach}` | `{behav}` | `{tier}` | {conf} |")
 
     lines.extend([
+        "",
+        "> [!NOTE]",
+        "> **Historical Observation Labels & Protocol Conformance:**",
+        "> Raw empirical observations retain their original recorded values. Their canonical interpretation depends on the case, pipeline phase, and supporting evidence: historical labels are not universal aliases for canonical verdicts. `UNREACHABLE_FALSE_POSITIVE`, for example, corresponds to `NO_STATIC_PATH_FOUND` when the recorded analysis establishes that the AST solver found no statically resolved path from entrypoints to the identified sink (`unreachable_dead_code`), while for `CASE-RW-03` (Cookiecutter) it corresponds to `NOT_VULNERABLE_ALREADY_SAFE` because AST analysis confirms the vulnerable sink pattern is completely absent and only `yaml.safe_load` is invoked. `NO_VULNERABILITIES_FOUND` corresponds to `NOT_VULNERABLE_ALREADY_SAFE` when static AST analysis proves the vulnerable symbol is absent or already migrated (`CASE-RW-02`). `INCONCLUSIVE` requires case-specific adjudication: for `inconclusive_guard`, an application pre-validation guard prevented exploit execution, canonically mapping to `RED_NOT_REPRODUCED`. For `CASE-RW-01`, while its historical raw behavioral observation recorded `INCONCLUSIVE` (exit code 10 non-reproduction, with M2 evidence attributing this to PyYAML 5.4.1 constructor error, unverified from raw run logs in this tranche), its canonical terminal adjudication under Spec §3.2 is `VERIFICATION_REJECTED` due to environment-policy violation (untrusted repository executed on host Tier 0 `LOCAL_SUBPROCESS_FALLBACK`, with `--unsafe-local` historically reported in project documentation but unverified from raw logs) and contradictory regression telemetry (`regression_passed: true` top-level vs `false` in repeat with 0 tests); this evidence-integrity rejection takes precedence over behavioral non-reproduction.",
+        "> Furthermore, exactly 5 of 10 historical records carry the legacy single-pass `GREEN_STATE_VERIFIED` label (while all 10/10 records use `protocol_conformance: LEGACY_SINGLE_PASS`, 1/1 repeat). These reflect historical single-run outcomes and do not satisfy the canonical 3-repeat acceptance gate (0/10 cases are three-repeat verified).",
+        "",
+        "> [!NOTE]",
+        "> **API Interaction, Control Flow & Telemetry Accounting:**",
+        "> - **Multi-Tier LLM Orchestration:** When remediation is enabled (`req.use_nemotron=True`) and RED state is reproduced, VulnTrace executes up to three model tiers sequentially: Triage (Small: `NVIDIA-Nemotron-3-Nano-30B-A3B`), Planning (Mid: `llama-3.3-70b-instruct`), and Patch Synthesis (Ultra: `Nemotron-3-Ultra-550b-a55b`). Triage and Planning run sequentially; if Triage fails or returns `None`, Planning is not skipped and proceeds with `Triage: N/A`. Each structured stage supports up to `max_retries=2` (1 to 3 attempts) upon API error or schema validation failure. Patch synthesis invokes Nemotron Ultra; if synthesis fails, errors, outputs invalid Python syntax, or produces no semantic changes, AST deterministic rewrite is invoked as an automated fallback when enabled. AST fallback is a defensive repair fallback, not an inference bypass (inference was attempted first). Expected logical LLM calls per remediated case range from 3 (baseline) to 7 (with schema validation retries). Static suppressions, pre-patch non-reproduced cases, and all verification repeats execute exactly 0 LLM calls.",
+        "> - **Threat Intelligence Dispatch (7 of 10 Cases):** Exactly 7 of 10 benchmark cases invoke `VerificationPipeline.run_pipeline()` and query threat intelligence (`TavilyClient.query_threat_intel()` during Stage 2 INTEL). Exactly 3 of 10 cases (`unreachable_dead_code`, `CASE-RW-02`, `CASE-RW-03`) are evaluated via standalone static AST reachability analysis without pipeline dispatch (0 Tavily invocations). Across verification repeats, dynamic test harnesses execute offline with kernel network denial (`--network none`) in Tier 1 containers, making exactly 0 Tavily calls.",
+        "> - **Offline Cache-Miss Behavior (Static Verification):** In `TokenFactoryClient` (`vulntrace/llm/client.py:90-127`) and `TavilyClient` (`vulntrace/intel/tavily_client.py:56-116`), if live mode is disabled (`LIVE_LLM=0` / `LIVE_INTEL=0`) but an API key is configured and an unrecorded query misses the cassette cache, execution falls through to live outbound HTTP requests. Zero external calls in offline testing are guaranteed only when credentials are omitted (triggering immediate internal synthetic error reports) or queries match pre-recorded cassettes.",
+        "> - **Telemetry Metric Disentanglement:** Benchmark reporting strictly distinguishes eight separate categories: (1) Client Invocations (Python function calls to API entry points), (2) Outbound HTTP Request Attempts (network socket transmissions initiated by the client library), (3) HTTP Responses Received (network responses returned by the remote server, including non-200 HTTP error statuses), (4) Successful HTTP 200 Responses with Valid JSON (completed advisory or completion responses), (5) Cassette Replays (deterministic disk fixtures where the client takes no outbound request on that code path), (6) Synthetic Error Reports (locally generated failure objects, such as internal 401 or exception-handled 500 reports created without a received HTTP response; internal 401 and exception-generated 500 objects are not counted as received HTTP responses), (7) Degraded Pipeline Outcomes (graceful fallbacks to static symbols or baseline context when threat intel or models are unavailable), and (8) Historical Telemetry Limitations (request-level HTTP metrics that were not recorded in the raw observations schema).",
         "",
         "> [!NOTE]",
         "> **Held-Out Generalizability Dataset Notice:**",
@@ -457,14 +469,16 @@ def update_readme_table(readme_path: Optional[Path] = None, table_md: Optional[s
         end_idx = content.find(TABLE_END_MARKER) + len(TABLE_END_MARKER)
         new_content = content[:start_idx] + table_md + content[end_idx:]
     else:
-        # Insert table before section 10 (Disclosures & Formal Limitations)
-        anchor = "## 10. Disclosures & Formal Limitations"
-        if anchor in content:
+        # Insert table before section 11 (Disclosures & Formal Limitations)
+        anchor = "## 11. Disclosures & Formal Limitations"
+        legacy_anchor = "## 10. Disclosures & Formal Limitations"
+        target_anchor = anchor if anchor in content else (legacy_anchor if legacy_anchor in content else None)
+        if target_anchor:
             new_section = (
-                "## 6. VulnTrace-Bench Evaluation Results ([Technical Specification §5](docs/TECHNICAL_SPEC.md#5-vulntrace-bench-protocol--evidence-engine))\n\n"
+                "## 10. VulnTrace-Bench Evaluation Results ([Technical Specification §5](docs/TECHNICAL_SPEC.md#5-vulntrace-bench-protocol--evidence-engine))\n\n"
                 f"{table_md}\n\n---\n\n"
             )
-            new_content = content.replace(anchor, new_section + anchor)
+            new_content = content.replace(target_anchor, new_section + target_anchor)
         else:
             new_content = content + "\n\n" + table_md + "\n"
 

@@ -51,9 +51,10 @@ class TavilyClient:
         Checks cassette store when live calls are disabled (default in CI/testing).
         """
         query_str = f'"{cve_id}" vulnerable function fix commit exploit'
+        is_live = IntelCassetteManager.is_live_enabled()
 
         # 1. Check offline cassette if live calls are not enabled or no API key
-        if not IntelCassetteManager.is_live_enabled() or not self.api_key:
+        if not is_live or not self.api_key:
             cassette_data = IntelCassetteManager.load_cassette(cve_id, query_str)
             if cassette_data:
                 raw_items = cassette_data.get("results", [])
@@ -89,18 +90,33 @@ class TavilyClient:
                     rejection_reasons=rejection_reasons
                 )
 
-        if not self.api_key:
-            return TavilySearchReport(
-                cve_id=cve_id,
-                query=query_str,
-                status_code=401,
-                latency_ms=0.0,
-                raw_results_count=0,
-                retained_results_count=0,
-                filtered_out_count=0,
-                findings=[],
-                rejection_reasons=["Tavily API key not configured."]
-            )
+            # Local offline cassette miss: strictly fail closed with internal status 412 marker
+            # This is a locally generated internal marker (LOCAL_OFFLINE_FIXTURE_MISS), NOT an upstream HTTP response.
+            if not is_live:
+                return TavilySearchReport(
+                    cve_id=cve_id,
+                    query=query_str,
+                    status_code=412,  # Local synthetic marker: Precondition Failed (offline fixture missing)
+                    latency_ms=0.0,
+                    raw_results_count=0,
+                    retained_results_count=0,
+                    filtered_out_count=0,
+                    findings=[],
+                    rejection_reasons=[f"Offline mode: No threat intelligence cassette found for {cve_id}. Live calls disabled."]
+                )
+
+            if not self.api_key:
+                return TavilySearchReport(
+                    cve_id=cve_id,
+                    query=query_str,
+                    status_code=401,
+                    latency_ms=0.0,
+                    raw_results_count=0,
+                    retained_results_count=0,
+                    filtered_out_count=0,
+                    findings=[],
+                    rejection_reasons=["Tavily API key not configured."]
+                )
 
         payload = {
             "api_key": self.api_key,
