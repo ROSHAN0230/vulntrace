@@ -120,15 +120,19 @@ const SHOWCASE_CASES: Record<ShowcaseCaseId, ShowcaseCaseData> = {
 +    return {"config": data}`,
     telemetrySummary: [
       { label: 'LLM Engine', value: 'NVIDIA_NEMOTRON_3_ULTRA' },
-      { label: 'Model', value: 'nvidia/Nemotron-3-Ultra-550b-a55b' },
-      { label: 'Tokens Used', value: '3,450 tokens' },
-      { label: 'Reproduction Latency', value: '131.9 ms' },
-      { label: 'Regression Suite', value: '3/3 passed (100%)' }
+      { label: 'Model Pipeline', value: 'Nano 30B (1,343t) → Super 120B (1,338t) → Ultra 550B (1,590t)' },
+      { label: 'Total Tokens Used', value: '4,271 tokens (across 3 live tiers)' },
+      { label: 'Pre-Patch Reproduction', value: '2,849.92 ms (RED exit 0)' },
+      { label: 'Ultra Synthesis Latency', value: '2,978.92 ms' },
+      { label: 'Post-Patch Verification', value: '1,474.48 ms (GREEN exit 42)' },
+      { label: 'Regression Suite', value: '3/3 passed in 1,822.57 ms' }
     ],
     notes: [
-      'Authentic recorded run from Phase 3 live verification.',
-      'Demonstrates contextual reasoning: a blind codemod (yaml.safe_load) breaks !env_var constructors.',
-      'Tier 1 container execution verified zero network leakage and zero ambient secret exposure.'
+      'Authentic recorded execution from Phase 3 live multi-tier verification (task-20351.log) under Tier 1 container isolation.',
+      'Total multi-tier LLM tokens: 4,271 across 3 live models (Nano 30B: 1,343 + Super 120B: 1,338 + Ultra 550B: 1,590).',
+      'Pre-patch exploit reproduced in 2,849.92 ms; Ultra patch synthesis completed in 2,978.92 ms; post-patch security block verified in 1,474.48 ms.',
+      'Demonstrates contextual reasoning: a blind codemod (yaml.safe_load) breaks custom !env_var constructors, whereas AppSafeLoader preserves business logic.',
+      'Historical attribution note: An earlier preliminary single-pass Tier 0 run (vulntrace_live_e2e_run.md) observed 131.9 ms post-patch verification with 1,410 Ultra tokens.'
     ]
   },
 
@@ -483,17 +487,17 @@ export const RecordedEvidenceViewer: React.FC = () => {
                   {item.title}
                 </div>
               </div>
-              <div className="mt-2 text-[11px] font-mono text-text-muted flex items-center justify-between">
-                <span>{item.cveId}</span>
+              <div className="mt-2.5 pt-2 border-t border-border-subtle/50 text-[11px] font-mono flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
+                <span className="text-[10px] text-text-muted shrink-0">{item.cveId}</span>
                 <span
-                  className={`font-semibold ${
+                  className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ${
                     item.verdictBadgeColor === 'emerald'
-                      ? 'text-emerald-400'
+                      ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/40'
                       : item.verdictBadgeColor === 'amber'
-                      ? 'text-amber-400'
+                      ? 'bg-amber-950/60 text-amber-400 border-amber-800/40'
                       : item.verdictBadgeColor === 'rose'
-                      ? 'text-rose-400'
-                      : 'text-blue-400'
+                      ? 'bg-rose-950/60 text-rose-400 border-rose-800/40'
+                      : 'bg-blue-950/60 text-blue-400 border-blue-800/40'
                   }`}
                 >
                   {item.verdict === 'GREEN_STATE_VERIFIED' ? 'VERIFIED' : item.verdict}
