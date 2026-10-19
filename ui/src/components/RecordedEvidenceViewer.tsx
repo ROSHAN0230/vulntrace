@@ -23,13 +23,14 @@ import {
   VerificationResult,
 } from '../utils/cryptoVerification';
 import { AUTHENTIC_SYNTH01_BUNDLE } from '../data/authenticBundle';
+import {
+  ShowcaseCaseId,
+  resolveInitialCaseId,
+  resolveCaseFromQuery
+} from '../utils/showcaseDeepLinks';
 
-export type ShowcaseCaseId =
-  | 'contextual_reasoning'
-  | 'case_rw_04'
-  | 'flasgger_external'
-  | 'naive_comparison'
-  | 'tavily_intel';
+export type { ShowcaseCaseId };
+export { resolveInitialCaseId, resolveCaseFromQuery };
 
 interface TestCaseInfo {
   name: string;
@@ -444,30 +445,6 @@ Normalized Pipeline Context Generated:
   }
 };
 
-function resolveInitialCaseId(): ShowcaseCaseId {
-  if (typeof window !== 'undefined') {
-    const params = new URLSearchParams(window.location.search);
-    const caseParam = params.get('case')?.toLowerCase();
-    if (caseParam) {
-      if (caseParam === 'case_rw_04' || caseParam === 'rw_04' || caseParam === 'repo_cloud_config' || caseParam === 'rw04') {
-        return 'case_rw_04';
-      }
-      if (caseParam === 'flasgger_external' || caseParam === 'flasgger' || caseParam === 'case_rw_01' || caseParam === 'rw_01' || caseParam === 'rw01') {
-        return 'flasgger_external';
-      }
-      if (caseParam === 'naive_comparison' || caseParam === 'naive' || caseParam === 'comparison' || caseParam === 'phase5') {
-        return 'naive_comparison';
-      }
-      if (caseParam === 'tavily_intel' || caseParam === 'tavily' || caseParam === 'intel' || caseParam === 'phase6') {
-        return 'tavily_intel';
-      }
-      if (caseParam === 'contextual_reasoning' || caseParam === 'synth_01' || caseParam === 'synth01' || caseParam === 'contextual') {
-        return 'contextual_reasoning';
-      }
-    }
-  }
-  return 'contextual_reasoning';
-}
 
 export const RecordedEvidenceViewer: React.FC = () => {
   const [selectedCaseId, setSelectedCaseId] = useState<ShowcaseCaseId>(resolveInitialCaseId);
