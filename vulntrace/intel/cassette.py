@@ -17,8 +17,8 @@ class IntelCassetteManager:
 
     @classmethod
     def is_live_enabled(cls) -> bool:
-        """Checks if live internet calls are allowed via LIVE_LLM or LIVE_INTEL environment variables."""
-        return os.environ.get("LIVE_LLM", "0") == "1" or os.environ.get("LIVE_INTEL", "0") == "1"
+        """Checks if live internet calls are allowed via LIVE_INTEL environment variable."""
+        return os.environ.get("LIVE_INTEL", "0") == "1"
 
     @classmethod
     def is_recording_enabled(cls) -> bool:

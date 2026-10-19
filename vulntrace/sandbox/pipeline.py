@@ -377,7 +377,21 @@ class VerificationPipeline:
 
                 emit("STAGE_START", "REGRESSION", "Running baseline regression tests...")
                 regression_res = await backend.run_regression_suite(workspace_id)
-                emit("STAGE_COMPLETE", "REGRESSION", f"Baseline regression suite completed: {regression_res.get('test_count', 0)} tests passed.")
+                reg_executed = regression_res.get("executed", True)
+                reg_passed = regression_res.get("passed", False) if reg_executed else False
+                normalized_reg_res = {
+                    **regression_res,
+                    "executed": reg_executed,
+                    "passed": reg_passed
+                }
+                if not reg_executed:
+                    skip_reason = regression_res.get("notes") or regression_res.get("error") or "not executed by backend"
+                    emit("STAGE_COMPLETE", "REGRESSION", f"Baseline regression suite SKIPPED: {skip_reason}")
+                elif reg_passed:
+                    emit("STAGE_COMPLETE", "REGRESSION", f"Baseline regression suite completed: {regression_res.get('test_count', 0)} tests passed.")
+                else:
+                    fail_reason = regression_res.get("stderr") or regression_res.get("error") or "baseline tests failed"
+                    emit("STATE_TRANSITION", "REGRESSION", f"REGRESSION FAILURE: {fail_reason}")
 
                 dt_total = (time.perf_counter() - t0) * 1000.0
                 emit("STATE_TRANSITION", "VERDICT", f"FINAL BEHAVIORAL VERDICT: UNREACHABLE_FALSE_POSITIVE (Total: {round(dt_total, 2)}ms)")
@@ -437,8 +451,8 @@ class VerificationPipeline:
                         success=True
                     ),
                     regression_ev=RegressionEvidence(
-                        executed=True,
-                        passed=regression_res.get("passed", False),
+                        executed=reg_executed,
+                        passed=reg_passed,
                         test_count=regression_res.get("test_count", 0),
                         latency_ms=regression_res.get("latency_ms", 0.0)
                     ),
@@ -454,7 +468,7 @@ class VerificationPipeline:
                     pre_patch_result=empty_sandbox,
                     remediation=empty_rem,
                     post_patch_result=empty_sandbox,
-                    regression_tests=regression_res,
+                    regression_tests=normalized_reg_res,
                     final_behavioral_verdict=verdict_rec.terminal_state,
                     structured_evidence={
                         "reachability": "UNREACHABLE_FALSE_POSITIVE",
@@ -695,72 +709,82 @@ class VerificationPipeline:
             pre_res = await _run_backend_script(harness_script_name, harness_res.sentinel_filename, "REPRODUCTION")
 
             # Execute Pre-Patch Acceptance Test Suite (Spec §4.9)
-            if pre_res.reproduction_state == "RED_STATE_REPRODUCED" and acceptance_test_file:
+            if pre_res.reproduction_state == "RED_STATE_REPRODUCED" and pre_res.parent_validated and acceptance_test_file:
                 emit("STAGE_START", "ACCEPTANCE", f"Executing pre-patch acceptance test suite ({acceptance_test_file}) in {backend.capabilities.tier.value}...")
                 pre_acceptance = await backend.run_regression_suite(workspace_id=workspace_id, test_file=acceptance_test_file)
                 pre_out = (pre_acceptance.get("stdout") or "") + "\n" + (pre_acceptance.get("stderr") or "")
+                pre_acc_executed = pre_acceptance.get("executed", True)
 
-                # 1. Telemetry and canary file inspection
                 telemetry_file = disposable_dir / "_acceptance_telemetry.json"
                 canary_file = disposable_dir / "_canary_acceptance.marker"
 
-                telemetry_data: Dict[str, Any] = {}
-                telemetry_valid = False
-                if telemetry_file.exists():
-                    try:
-                        content = telemetry_file.read_text(encoding="utf-8")
-                        telemetry_data = json.loads(content)
-                        if isinstance(telemetry_data, dict) and "probe_blocked" in telemetry_data and "canary_created" in telemetry_data:
-                            telemetry_valid = True
-                    except Exception:
-                        telemetry_valid = False
-
-                parent_canary_observed = canary_file.exists()
-                telemetry_canary_observed = telemetry_data.get("canary_created") is True
-                probe_blocked = telemetry_data.get("probe_blocked") is True
-                exc_type = telemetry_data.get("exception_type")
-
-                has_import_error = any(e in pre_out for e in ("ImportError", "ModuleNotFoundError", "SyntaxError", "No module named"))
-                has_parser_error = any(e in pre_out for e in ("ParserError", "ScannerError")) or exc_type in ("ParserError", "ScannerError")
-
-                # Safeguard 1 & 2: Valid Vulnerable RED validation
-                pres_passed = "test_preserve_custom_tags PASSED" in pre_out if ("test_preserve_custom_tags" in (acceptance_code or "")) else True
-                pos_control_passed = "test_standard_benign_config_loads_cleanly PASSED" in pre_out if ("test_standard_benign_config_loads_cleanly" in (acceptance_code or "")) else True
-
-                is_valid_red = False
-                if has_import_error or has_parser_error:
-                    emit("ERROR", "ACCEPTANCE", f"Pre-patch acceptance test failed due to import/parser error: {pre_out[:150]}")
-                    intent_ev["pre_patch_error"] = "IMPORT_OR_PARSER_ERROR"
-                elif not telemetry_valid:
-                    emit("ERROR", "ACCEPTANCE", "Pre-patch acceptance test failed: missing or malformed telemetry record.")
-                    intent_ev["pre_patch_error"] = "MALFORMED_TELEMETRY"
-                elif parent_canary_observed != telemetry_canary_observed:
-                    emit("ERROR", "ACCEPTANCE", f"Pre-patch acceptance test rejected: contradictory canary evidence (parent={parent_canary_observed}, telemetry={telemetry_canary_observed}).")
-                    intent_ev["pre_patch_error"] = "CONTRADICTORY_CANARY_EVIDENCE"
-                elif not parent_canary_observed or not telemetry_canary_observed:
-                    emit("ERROR", "ACCEPTANCE", "Pre-patch acceptance test rejected: probe failed to demonstrate unsafe behavior (canary was not created).")
-                    intent_ev["pre_patch_error"] = "CANARY_NOT_CREATED"
-                elif probe_blocked:
-                    emit("ERROR", "ACCEPTANCE", f"Pre-patch acceptance test rejected: probe was unexpectedly blocked pre-patch ({exc_type}).")
-                    intent_ev["pre_patch_error"] = "PROBE_PREMATURELY_BLOCKED"
-                elif not pres_passed or not pos_control_passed:
-                    emit("ERROR", "ACCEPTANCE", "Pre-patch acceptance test rejected: baseline functional preservation or benign control failed.")
-                    intent_ev["pre_patch_error"] = "PRESERVATION_BASELINE_FAILED"
-                elif "UNSAFE_PROBE_NOT_BLOCKED" in pre_out or "test_security_probe_rejection FAILED" in pre_out:
-                    is_valid_red = True
-
-                intent_ev["pre_patch_telemetry"] = telemetry_data
-                intent_ev["pre_patch_red_confirmed"] = is_valid_red
-                intent_ev["canary_created_pre_patch"] = parent_canary_observed and telemetry_canary_observed
-                intent_ev["probe_blocked_pre_patch"] = probe_blocked
-                intent_ev["exception_type_pre_patch"] = exc_type
-                intent_ev["pre_patch_result"] = pre_acceptance
-                intent_ev["acceptance_test_sha256"] = acceptance_test_sha256
-
-                if is_valid_red:
-                    emit("STATE_TRANSITION", "ACCEPTANCE", f"PRE-PATCH ACCEPTANCE RED CONFIRMED: Target demonstrated vulnerable behavior (canary_created=True, probe_blocked=False, exc={exc_type}).")
+                if not pre_acc_executed:
+                    skip_reason = pre_acceptance.get("notes") or pre_acceptance.get("error") or "Pre-patch acceptance test not executed by backend"
+                    emit("STAGE_COMPLETE", "ACCEPTANCE", f"Pre-patch acceptance test SKIPPED (UNVERIFIED): {skip_reason}")
+                    intent_ev["pre_patch_executed"] = False
+                    intent_ev["pre_patch_red_confirmed"] = False
+                    intent_ev["pre_patch_result"] = pre_acceptance
+                    intent_ev["acceptance_test_sha256"] = acceptance_test_sha256
                 else:
-                    emit("STATE_TRANSITION", "ACCEPTANCE", f"PRE-PATCH ACCEPTANCE INCONCLUSIVE: Target output did not qualify as valid RED ({intent_ev.get('pre_patch_error')}).")
+                    intent_ev["pre_patch_executed"] = True
+                    # 1. Telemetry and canary file inspection
+                    telemetry_data: Dict[str, Any] = {}
+                    telemetry_valid = False
+                    if telemetry_file.exists():
+                        try:
+                            content = telemetry_file.read_text(encoding="utf-8")
+                            telemetry_data = json.loads(content)
+                            if isinstance(telemetry_data, dict) and "probe_blocked" in telemetry_data and "canary_created" in telemetry_data:
+                                telemetry_valid = True
+                        except Exception:
+                            telemetry_valid = False
+
+                    parent_canary_observed = canary_file.exists()
+                    telemetry_canary_observed = telemetry_data.get("canary_created") is True
+                    probe_blocked = telemetry_data.get("probe_blocked") is True
+                    exc_type = telemetry_data.get("exception_type")
+
+                    has_import_error = any(e in pre_out for e in ("ImportError", "ModuleNotFoundError", "SyntaxError", "No module named"))
+                    has_parser_error = any(e in pre_out for e in ("ParserError", "ScannerError")) or exc_type in ("ParserError", "ScannerError")
+
+                    # Safeguard 1 & 2: Valid Vulnerable RED validation
+                    pres_passed = "test_preserve_custom_tags PASSED" in pre_out if ("test_preserve_custom_tags" in (acceptance_code or "")) else True
+                    pos_control_passed = "test_standard_benign_config_loads_cleanly PASSED" in pre_out if ("test_standard_benign_config_loads_cleanly" in (acceptance_code or "")) else True
+
+                    is_valid_red = False
+                    if has_import_error or has_parser_error:
+                        emit("ERROR", "ACCEPTANCE", f"Pre-patch acceptance test failed due to import/parser error: {pre_out[:150]}")
+                        intent_ev["pre_patch_error"] = "IMPORT_OR_PARSER_ERROR"
+                    elif not telemetry_valid:
+                        emit("ERROR", "ACCEPTANCE", "Pre-patch acceptance test failed: missing or malformed telemetry record.")
+                        intent_ev["pre_patch_error"] = "MALFORMED_TELEMETRY"
+                    elif parent_canary_observed != telemetry_canary_observed:
+                        emit("ERROR", "ACCEPTANCE", f"Pre-patch acceptance test rejected: contradictory canary evidence (parent={parent_canary_observed}, telemetry={telemetry_canary_observed}).")
+                        intent_ev["pre_patch_error"] = "CONTRADICTORY_CANARY_EVIDENCE"
+                    elif not parent_canary_observed or not telemetry_canary_observed:
+                        emit("ERROR", "ACCEPTANCE", "Pre-patch acceptance test rejected: probe failed to demonstrate unsafe behavior (canary was not created).")
+                        intent_ev["pre_patch_error"] = "CANARY_NOT_CREATED"
+                    elif probe_blocked:
+                        emit("ERROR", "ACCEPTANCE", f"Pre-patch acceptance test rejected: probe was unexpectedly blocked pre-patch ({exc_type}).")
+                        intent_ev["pre_patch_error"] = "PROBE_PREMATURELY_BLOCKED"
+                    elif not pres_passed or not pos_control_passed:
+                        emit("ERROR", "ACCEPTANCE", "Pre-patch acceptance test rejected: baseline functional preservation or benign control failed.")
+                        intent_ev["pre_patch_error"] = "PRESERVATION_BASELINE_FAILED"
+                    elif "UNSAFE_PROBE_NOT_BLOCKED" in pre_out or "test_security_probe_rejection FAILED" in pre_out:
+                        is_valid_red = True
+
+                    intent_ev["pre_patch_telemetry"] = telemetry_data
+                    intent_ev["pre_patch_red_confirmed"] = is_valid_red
+                    intent_ev["canary_created_pre_patch"] = parent_canary_observed and telemetry_canary_observed
+                    intent_ev["probe_blocked_pre_patch"] = probe_blocked
+                    intent_ev["exception_type_pre_patch"] = exc_type
+                    intent_ev["pre_patch_result"] = pre_acceptance
+                    intent_ev["acceptance_test_sha256"] = acceptance_test_sha256
+
+                    if is_valid_red:
+                        emit("STATE_TRANSITION", "ACCEPTANCE", f"PRE-PATCH ACCEPTANCE RED CONFIRMED: Target demonstrated vulnerable behavior (canary_created=True, probe_blocked=False, exc={exc_type}).")
+                    else:
+                        emit("STATE_TRANSITION", "ACCEPTANCE", f"PRE-PATCH ACCEPTANCE INCONCLUSIVE: Target output did not qualify as valid RED ({intent_ev.get('pre_patch_error')}).")
 
                 # Clean canary and telemetry files from workspace prior to remediation
                 if canary_file.exists():
@@ -774,19 +798,36 @@ class VerificationPipeline:
                     except Exception:
                         pass
 
-            # Check if pre-patch state could not reproduce (INCONCLUSIVE / GUARD BLOCKED / REJECTED)
-            if pre_res.reproduction_state != "RED_STATE_REPRODUCED":
-                emit("STATE_TRANSITION", "REPRODUCTION", f"PRE-PATCH STATE: {pre_res.reproduction_state} ({pre_res.validation_notes or pre_res.assertion_result}) (Exit {pre_res.exit_code}).")
-                emit("LOG", "PATCH", "Halting automated patch synthesis: VulnTrace requires confirmed RED state before attempting remediation.")
+            # Check if pre-patch state could not reproduce or was not parent-validated (INCONCLUSIVE / GUARD BLOCKED / REJECTED / UNVALIDATED)
+            if pre_res.reproduction_state != "RED_STATE_REPRODUCED" or not pre_res.parent_validated:
+                if pre_res.reproduction_state == "RED_STATE_REPRODUCED" and not pre_res.parent_validated:
+                    emit("STATE_TRANSITION", "REPRODUCTION", f"PRE-PATCH REPRODUCTION UNVERIFIED: RED state reported without parent validation ({pre_res.validation_notes or 'unverified by parent'}) (Exit {pre_res.exit_code}).")
+                else:
+                    emit("STATE_TRANSITION", "REPRODUCTION", f"PRE-PATCH STATE: {pre_res.reproduction_state} ({pre_res.validation_notes or pre_res.assertion_result}) (Exit {pre_res.exit_code}).")
+                emit("LOG", "PATCH", "Halting automated patch synthesis: VulnTrace requires confirmed RED state with parent validation before attempting remediation.")
                 
                 emit("STAGE_START", "REGRESSION", "Running baseline regression tests...")
                 regression_res = await backend.run_regression_suite(workspace_id)
-                emit("STAGE_COMPLETE", "REGRESSION", f"Baseline regression suite completed: {regression_res.get('test_count', 0)} tests passed.")
+                reg_executed = regression_res.get("executed", True)
+                reg_passed = regression_res.get("passed", False) if reg_executed else False
+                normalized_reg_res = {
+                    **regression_res,
+                    "executed": reg_executed,
+                    "passed": reg_passed
+                }
+                if not reg_executed:
+                    skip_reason = regression_res.get("notes") or regression_res.get("error") or "not executed by backend"
+                    emit("STAGE_COMPLETE", "REGRESSION", f"Baseline regression suite SKIPPED: {skip_reason}")
+                elif reg_passed:
+                    emit("STAGE_COMPLETE", "REGRESSION", f"Baseline regression suite completed: {regression_res.get('test_count', 0)} tests passed.")
+                else:
+                    fail_reason = regression_res.get("stderr") or regression_res.get("error") or "baseline tests failed"
+                    emit("STATE_TRANSITION", "REGRESSION", f"REGRESSION FAILURE: {fail_reason}")
 
                 empty_post = SandboxExecutionResult(
                     exit_code=pre_res.exit_code,
                     stdout="",
-                    stderr=f"Post-patch verification skipped: Pre-patch state was {pre_res.reproduction_state}.",
+                    stderr=f"Post-patch verification skipped: Pre-patch state was not parent-validated red ({pre_res.reproduction_state}, parent_validated={pre_res.parent_validated}).",
                     latency_ms=0.0,
                     sentinel_created=False,
                     reproduction_state=pre_res.reproduction_state,
@@ -800,11 +841,14 @@ class VerificationPipeline:
                     target_file=resolved_target_file,
                     engine="SKIPPED",
                     diff="",
-                    explanation=f"Skipped remediation: Pre-patch verification was not confirmed red ({pre_res.reproduction_state}).",
+                    explanation=f"Skipped remediation: Pre-patch verification was not confirmed red with parent validation ({pre_res.reproduction_state}, parent_validated={pre_res.parent_validated}).",
                     latency_ms=0.0,
                     success=False,
                     validation_status="SKIPPED"
                 )
+
+                pre_verdict_state = "VERIFICATION_REJECTED" if (pre_res.reproduction_state == "RED_STATE_REPRODUCED" and not pre_res.parent_validated) else pre_res.reproduction_state
+                verdict_validation_notes = pre_res.validation_notes or ("Parent trust boundary rejected unvalidated RED state." if not pre_res.parent_validated else "")
 
                 verdict_rec = VerdictEngine.evaluate(
                     cve_id=req.cve_id,
@@ -815,13 +859,13 @@ class VerificationPipeline:
                     behavior_ev=BehaviorEvidence(
                         pre_patch_exit_code=pre_res.exit_code,
                         pre_patch_sentinel_observed=pre_res.sentinel_created,
-                        pre_patch_state=pre_res.reproduction_state,
+                        pre_patch_state=pre_verdict_state,
                         pre_patch_assertion=pre_res.assertion_result,
                         post_patch_exit_code=0,
                         post_patch_sentinel_observed=False,
-                        post_patch_state=pre_res.reproduction_state,
+                        post_patch_state=pre_verdict_state,
                         parent_validated=pre_res.parent_validated,
-                        validation_notes=pre_res.validation_notes
+                        validation_notes=verdict_validation_notes
                     ),
                     patch_ev=PatchEvidence(
                         engine="SKIPPED",
@@ -832,8 +876,8 @@ class VerificationPipeline:
                         success=False
                     ),
                     regression_ev=RegressionEvidence(
-                        executed=True,
-                        passed=regression_res.get("passed", False),
+                        executed=reg_executed,
+                        passed=reg_passed,
                         test_count=regression_res.get("test_count", 0),
                         latency_ms=regression_res.get("latency_ms", 0.0)
                     ),
@@ -852,7 +896,7 @@ class VerificationPipeline:
                     pre_patch_result=pre_res,
                     remediation=empty_rem,
                     post_patch_result=empty_post,
-                    regression_tests=regression_res,
+                    regression_tests=normalized_reg_res,
                     final_behavioral_verdict=verdict_rec.terminal_state,
                     structured_evidence={
                         **(pre_res.structured_evidence or {}),
@@ -1050,7 +1094,10 @@ class VerificationPipeline:
             post_res = await _run_backend_script(harness_script_name, harness_res.sentinel_filename, "VERIFICATION")
 
             if post_res.reproduction_state == "GREEN_STATE_BLOCKED":
-                emit("STATE_TRANSITION", "VERIFICATION", f"GREEN STATE VERIFIED: Risky instantiation blocked (exit {post_res.exit_code}, {post_res.assertion_result}) in {post_res.latency_ms}ms")
+                if post_res.parent_validated:
+                    emit("STATE_TRANSITION", "VERIFICATION", f"GREEN STATE VERIFIED: Risky instantiation blocked (exit {post_res.exit_code}, {post_res.assertion_result}) in {post_res.latency_ms}ms")
+                else:
+                    emit("STATE_TRANSITION", "VERIFICATION", f"POST-PATCH RE-TEST SIMULATED (UNVERIFIED): Risky instantiation simulated blocked ({post_res.validation_notes}) in {post_res.latency_ms}ms")
             else:
                 emit("STATE_TRANSITION", "VERIFICATION", f"POST-PATCH VERIFICATION FAILED: {post_res.reproduction_state} ({post_res.validation_notes})")
 
@@ -1066,64 +1113,85 @@ class VerificationPipeline:
                 emit("STAGE_START", "ACCEPTANCE", f"Executing post-patch acceptance test suite ({acceptance_test_file}) in {backend.capabilities.tier.value}...")
                 post_acceptance = await backend.run_regression_suite(workspace_id=workspace_id, test_file=acceptance_test_file)
                 post_out = (post_acceptance.get("stdout") or "") + "\n" + (post_acceptance.get("stderr") or "")
+                post_acc_executed = post_acceptance.get("executed", True)
 
-                # 1. Telemetry and canary file inspection
-                telemetry_file = disposable_dir / "_acceptance_telemetry.json"
-                canary_file = disposable_dir / "_canary_acceptance.marker"
-
-                post_telemetry: Dict[str, Any] = {}
-                telemetry_valid = False
-                if telemetry_file.exists():
-                    try:
-                        post_telemetry = json.loads(telemetry_file.read_text(encoding="utf-8"))
-                        if isinstance(post_telemetry, dict) and "probe_blocked" in post_telemetry and "canary_created" in post_telemetry:
-                            telemetry_valid = True
-                    except Exception:
-                        telemetry_valid = False
-
-                parent_canary_observed = canary_file.exists()
-                telemetry_canary_observed = post_telemetry.get("canary_created") is True
-                probe_blocked = post_telemetry.get("probe_blocked") is True
-                exc_type = post_telemetry.get("exception_type")
-
-                post_passed = post_acceptance.get("passed", False)
-
-                # Safeguard 1 & 2: Valid Repaired GREEN validation
-                # Requires:
-                # - Entire acceptance test module passed
-                # - Valid telemetry record present
-                # - Exact expected constructor-blocking exception (yaml.constructor.ConstructorError)
-                # - Probe was blocked: probe_blocked=True
-                # - Canary was NOT created: both in telemetry and independently observed by parent
-                # - Custom tags preserved
-                # - Benign configuration passed
-                exact_exception_matched = exc_type in ("yaml.constructor.ConstructorError", "ConstructorError")
-                canary_absent = (not parent_canary_observed) and (not telemetry_canary_observed)
-                pres_passed = "test_preserve_custom_tags PASSED" in post_out if ("test_preserve_custom_tags" in (acceptance_code or "")) else True
-                pos_control_passed = "test_standard_benign_config_loads_cleanly PASSED" in post_out if ("test_standard_benign_config_loads_cleanly" in (acceptance_code or "")) else True
-                sec_blocked = post_passed and telemetry_valid and probe_blocked and exact_exception_matched and canary_absent
-
-                is_valid_green = sec_blocked and pres_passed and pos_control_passed
-
-                intent_ev["post_patch_telemetry"] = post_telemetry
-                intent_ev["post_patch_result"] = post_acceptance
-                intent_ev["post_patch_green_confirmed"] = is_valid_green
-                intent_ev["security_blocked"] = sec_blocked
-                intent_ev["canary_created_post_patch"] = parent_canary_observed or telemetry_canary_observed
-                intent_ev["probe_blocked_post_patch"] = probe_blocked
-                intent_ev["exception_type_post_patch"] = exc_type
-                intent_ev["preservation_verified"] = pres_passed
-                intent_ev["positive_control_passed"] = pos_control_passed
-
-                if is_valid_green:
-                    emit("STATE_TRANSITION", "ACCEPTANCE", "POST-PATCH ACCEPTANCE GREEN CONFIRMED: Exact ConstructorError block verified, canary absent, custom tags & benign config passed.")
+                if not post_acc_executed:
+                    skip_reason = post_acceptance.get("notes") or post_acceptance.get("error") or "Post-patch acceptance test not executed by backend"
+                    emit("STAGE_COMPLETE", "ACCEPTANCE", f"Post-patch acceptance test SKIPPED (UNVERIFIED): {skip_reason}")
+                    intent_ev["post_patch_executed"] = False
+                    intent_ev["post_patch_result"] = post_acceptance
+                    intent_ev["post_patch_green_confirmed"] = False
+                    intent_ev["security_blocked"] = False
+                    intent_ev["preservation_verified"] = False
                 else:
-                    emit("STATE_TRANSITION", "ACCEPTANCE", f"POST-PATCH ACCEPTANCE FAILED: sec_blocked={sec_blocked}, pres_passed={pres_passed}, pos_control={pos_control_passed}, canary_absent={canary_absent}, exc={exc_type}")
+                    intent_ev["post_patch_executed"] = True
+                    # 1. Telemetry and canary file inspection
+                    telemetry_file = disposable_dir / "_acceptance_telemetry.json"
+                    canary_file = disposable_dir / "_canary_acceptance.marker"
+
+                    post_telemetry: Dict[str, Any] = {}
+                    telemetry_valid = False
+                    if telemetry_file.exists():
+                        try:
+                            post_telemetry = json.loads(telemetry_file.read_text(encoding="utf-8"))
+                            if isinstance(post_telemetry, dict) and "probe_blocked" in post_telemetry and "canary_created" in post_telemetry:
+                                telemetry_valid = True
+                        except Exception:
+                            telemetry_valid = False
+
+                    parent_canary_observed = canary_file.exists()
+                    telemetry_canary_observed = post_telemetry.get("canary_created") is True
+                    probe_blocked = post_telemetry.get("probe_blocked") is True
+                    exc_type = post_telemetry.get("exception_type")
+
+                    post_passed = post_acceptance.get("passed", False)
+
+                    # Safeguard 1 & 2: Valid Repaired GREEN validation
+                    # Requires:
+                    # - Entire acceptance test module passed
+                    # - Valid telemetry record present
+                    # - Exact expected constructor-blocking exception (yaml.constructor.ConstructorError)
+                    # - Probe was blocked: probe_blocked=True
+                    # - Canary was NOT created: both in telemetry and independently observed by parent
+                    # - Custom tags preserved
+                    # - Benign configuration passed
+                    exact_exception_matched = exc_type in ("yaml.constructor.ConstructorError", "ConstructorError")
+                    canary_absent = (not parent_canary_observed) and (not telemetry_canary_observed)
+                    pres_passed = "test_preserve_custom_tags PASSED" in post_out if ("test_preserve_custom_tags" in (acceptance_code or "")) else True
+                    pos_control_passed = "test_standard_benign_config_loads_cleanly PASSED" in post_out if ("test_standard_benign_config_loads_cleanly" in (acceptance_code or "")) else True
+                    sec_blocked = post_passed and telemetry_valid and probe_blocked and exact_exception_matched and canary_absent
+
+                    is_valid_green = sec_blocked and pres_passed and pos_control_passed
+
+                    intent_ev["post_patch_telemetry"] = post_telemetry
+                    intent_ev["post_patch_result"] = post_acceptance
+                    intent_ev["post_patch_green_confirmed"] = is_valid_green
+                    intent_ev["security_blocked"] = sec_blocked
+                    intent_ev["canary_created_post_patch"] = parent_canary_observed or telemetry_canary_observed
+                    intent_ev["probe_blocked_post_patch"] = probe_blocked
+                    intent_ev["exception_type_post_patch"] = exc_type
+                    intent_ev["preservation_verified"] = pres_passed
+                    intent_ev["positive_control_passed"] = pos_control_passed
+
+                    if is_valid_green:
+                        emit("STATE_TRANSITION", "ACCEPTANCE", "POST-PATCH ACCEPTANCE GREEN CONFIRMED: Exact ConstructorError block verified, canary absent, custom tags & benign config passed.")
+                    else:
+                        emit("STATE_TRANSITION", "ACCEPTANCE", f"POST-PATCH ACCEPTANCE FAILED: sec_blocked={sec_blocked}, pres_passed={pres_passed}, pos_control={pos_control_passed}, canary_absent={canary_absent}, exc={exc_type}")
 
             # Stage 5: Regression Testing
             emit("STAGE_START", "REGRESSION", "Executing regression test suite (pytest)...")
             regression_res = await backend.run_regression_suite(workspace_id)
-            if regression_res.get("passed"):
+            reg_executed = regression_res.get("executed", True)
+            reg_passed = regression_res.get("passed", False) if reg_executed else False
+            normalized_reg_res = {
+                **regression_res,
+                "executed": reg_executed,
+                "passed": reg_passed
+            }
+            if not reg_executed:
+                skip_reason = regression_res.get("notes") or regression_res.get("error") or "Regression suite not executed by backend"
+                emit("STAGE_COMPLETE", "REGRESSION", f"Regression suite SKIPPED: {skip_reason}")
+            elif reg_passed:
                 emit("STAGE_COMPLETE", "REGRESSION", f"Regression suite PASSED: {regression_res.get('test_count', 0)} tests passed in {regression_res.get('latency_ms')}ms")
             else:
                 emit("STATE_TRANSITION", "REGRESSION", f"REGRESSION FAILURE: {regression_res.get('stderr')}")
@@ -1152,8 +1220,8 @@ class VerificationPipeline:
                 success=remediation_res.success
             )
             regression_ev = RegressionEvidence(
-                executed=True,
-                passed=regression_res.get("passed", False),
+                executed=reg_executed,
+                passed=reg_passed,
                 test_count=regression_res.get("test_count", 0),
                 latency_ms=regression_res.get("latency_ms", 0.0),
                 error=regression_res.get("error")
@@ -1206,7 +1274,35 @@ class VerificationPipeline:
                 }
             if intent_ev:
                 pipeline_evidence["intent_verification"] = intent_ev
-                if not intent_ev.get("post_patch_green_confirmed", True):
+                post_acc_exec = intent_ev.get("post_patch_executed", True)
+                post_acc_green = intent_ev.get("post_patch_green_confirmed", True)
+
+                if not post_acc_exec:
+                    # Required acceptance test was skipped / unverified:
+                    # 1. A candidate GREEN state cannot be certified without executed acceptance validation.
+                    # 2. A skipped acceptance suite must not itself manufacture or cause RED_STATE_PERSISTS.
+                    # 3. If an existing RED_STATE_PERSISTS verdict is independently justified by genuinely executed,
+                    #    parent-validated behavioral evidence (post_res.reproduction_state == "RED_STATE_PERSISTS"
+                    #    and post_res.parent_validated), preserve that legitimate evidence-based result.
+                    #    Otherwise, if the RED verdict depends on unverified/missing evidence, report UNEXPECTED_FAILURE.
+                    if final_verdict == "GREEN_STATE_VERIFIED":
+                        verdict_record.terminal_state = "UNEXPECTED_FAILURE"
+                        verdict_record.reason = "Required post-patch acceptance test was skipped / unverified; green state cannot be verified without executed acceptance validation."
+                        final_verdict = "UNEXPECTED_FAILURE"
+                        verdict_record.evidence_summary["terminal_state"] = final_verdict
+                        verdict_record.is_safe_claim = False
+                    elif final_verdict == "RED_STATE_PERSISTS":
+                        if post_res.reproduction_state == "RED_STATE_PERSISTS" and post_res.parent_validated:
+                            # Independently justified by genuine parent-validated behavioral execution
+                            verdict_record.evidence_summary["acceptance_note"] = "Post-patch acceptance suite was skipped; RED_STATE_PERSISTS verdict is independently justified by parent-validated behavioral execution."
+                        else:
+                            # Unverified behavioral evidence; skipped acceptance suite cannot justify RED_STATE_PERSISTS
+                            verdict_record.terminal_state = "UNEXPECTED_FAILURE"
+                            verdict_record.reason = "Post-patch acceptance test was skipped / unverified and behavioral persistence lacked independent parent validation."
+                            final_verdict = "UNEXPECTED_FAILURE"
+                            verdict_record.evidence_summary["terminal_state"] = final_verdict
+                            verdict_record.is_safe_claim = False
+                elif not post_acc_green:
                     if not intent_ev.get("preservation_verified", True):
                         verdict_record.terminal_state = "REGRESSION_FAILURE"
                         verdict_record.reason = "Custom tag preservation failed post-patch under acceptance test suite"
@@ -1228,7 +1324,7 @@ class VerificationPipeline:
                 pre_patch_result=pre_res,
                 remediation=remediation_res,
                 post_patch_result=post_res,
-                regression_tests=regression_res,
+                regression_tests=normalized_reg_res,
                 final_behavioral_verdict=final_verdict,
                 structured_evidence=pipeline_evidence,
                 verdict_record=verdict_record,
