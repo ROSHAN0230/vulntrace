@@ -8,6 +8,7 @@ import { StepPlan } from './components/StepPlan';
 import { StepLiveRun } from './components/StepLiveRun';
 import { StepEvidence } from './components/StepEvidence';
 import { StepExport } from './components/StepExport';
+import { RecordedEvidenceViewer } from './components/RecordedEvidenceViewer';
 import {
   SystemHealthResponse,
   BenchmarkScenarioInfo,
@@ -23,6 +24,15 @@ import {
 export const App: React.FC = () => {
   // Theme state
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+
+  // Mode View: Studio Workflow vs Judge Recorded Evidence Showcase
+  const [activeView, setActiveView] = useState<'studio' | 'showcase'>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('view') === 'showcase' || !!params.get('case') ? 'showcase' : 'studio';
+    }
+    return 'studio';
+  });
 
   // Workflow Navigation
   const [currentStep, setCurrentStep] = useState<StepNumber>(1);
@@ -128,9 +138,15 @@ export const App: React.FC = () => {
   // 3. Deep-Linking & Workflow State Inspection Support
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const viewParam = params.get('view');
+    const caseParam = params.get('case');
     const stepParam = params.get('step');
     const stateParam = params.get('state');
     const runIdParam = params.get('runId') || 'run_70997352ab18';
+
+    if (viewParam === 'showcase' || caseParam) {
+      setActiveView('showcase');
+    }
 
     if (stepParam) {
       const stepNum = parseInt(stepParam, 10) as StepNumber;
@@ -573,6 +589,20 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleTabChange = (view: 'studio' | 'showcase') => {
+    setActiveView(view);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (view === 'showcase') {
+        url.searchParams.set('view', 'showcase');
+      } else {
+        url.searchParams.delete('view');
+        url.searchParams.delete('case');
+      }
+      window.history.replaceState({}, '', url.toString());
+    }
+  };
+
   return (
     <div className="min-h-screen bg-canvas dark:bg-[#020617] light:bg-[#f8fafc] text-slate-100 dark:text-slate-100 light:text-slate-900 flex flex-col font-sans transition-colors">
       {/* 1. Persistent Run Header (Spec §4.13) */}
@@ -585,29 +615,37 @@ export const App: React.FC = () => {
         healthLoading={healthLoading}
         theme={theme}
         onToggleTheme={handleToggleTheme}
+        activeTab={activeView}
+        onTabChange={handleTabChange}
       />
 
-      {/* 2. Seven-Step Navigation Stepper (Spec §4.13) */}
-      <StepperNav
-        currentStep={currentStep}
-        completedSteps={completedSteps}
-        onSelectStep={handleStepTransition}
-      />
-
-      {/* 3. Main Step Work Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-5 md:px-6 md:py-6 lg:px-8 lg:py-7">
-        {currentStep === 1 && (
-          <StepSource
-            benchmarks={benchmarks}
-            currentRun={currentRun}
-            loading={sourceLoading}
-            error={sourceError}
-            onSelectBenchmark={handleSelectBenchmark}
-            onSubmitGithubUrl={handleSubmitGithubUrl}
-            onSubmitZipUpload={handleSubmitZipUpload}
-            onProceedToAnalysis={() => handleStepTransition(2)}
+      {activeView === 'showcase' ? (
+        <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-5 md:px-6 md:py-6 lg:px-8 lg:py-7">
+          <RecordedEvidenceViewer />
+        </main>
+      ) : (
+        <>
+          {/* 2. Seven-Step Navigation Stepper (Spec §4.13) */}
+          <StepperNav
+            currentStep={currentStep}
+            completedSteps={completedSteps}
+            onSelectStep={handleStepTransition}
           />
-        )}
+
+          {/* 3. Main Step Work Area */}
+          <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-5 md:px-6 md:py-6 lg:px-8 lg:py-7">
+            {currentStep === 1 && (
+              <StepSource
+                benchmarks={benchmarks}
+                currentRun={currentRun}
+                loading={sourceLoading}
+                error={sourceError}
+                onSelectBenchmark={handleSelectBenchmark}
+                onSubmitGithubUrl={handleSubmitGithubUrl}
+                onSubmitZipUpload={handleSubmitZipUpload}
+                onProceedToAnalysis={() => handleStepTransition(2)}
+              />
+            )}
 
         {currentStep === 2 && (
           <StepAnalysis
@@ -675,6 +713,8 @@ export const App: React.FC = () => {
           />
         )}
       </main>
+      </>
+      )}
 
       {/* Persistent Footer with WCAG AA compliant text contrast */}
       <footer className="border-t border-border-subtle bg-surface-1 dark:bg-[#070b14] light:bg-white px-6 py-3 text-xs font-mono text-slate-400 flex flex-wrap items-center justify-between gap-4">

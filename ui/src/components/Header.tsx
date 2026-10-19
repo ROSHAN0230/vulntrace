@@ -21,6 +21,8 @@ interface HeaderProps {
   healthLoading?: boolean;
   theme: 'dark' | 'light';
   onToggleTheme: () => void;
+  activeTab?: 'studio' | 'showcase';
+  onTabChange?: (tab: 'studio' | 'showcase') => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -31,7 +33,9 @@ export const Header: React.FC<HeaderProps> = ({
   health,
   healthLoading,
   theme,
-  onToggleTheme
+  onToggleTheme,
+  activeTab = 'studio',
+  onTabChange
 }) => {
   const [copiedRunId, setCopiedRunId] = React.useState(false);
 
@@ -159,6 +163,35 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Mode Switcher Toggle Pill */}
+      {onTabChange && (
+        <div className="flex items-center gap-1 bg-surface-2 dark:bg-[#0f172a] light:bg-slate-100 p-1 rounded-lg border border-border-subtle dark:border-slate-800">
+          <button
+            type="button"
+            onClick={() => onTabChange('studio')}
+            className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${
+              activeTab === 'studio'
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                : 'text-text-muted hover:text-text-primary'
+            }`}
+          >
+            Studio Workflow
+          </button>
+          <button
+            type="button"
+            onClick={() => onTabChange('showcase')}
+            className={`px-3 py-1 rounded text-xs font-semibold transition-colors flex items-center gap-1.5 ${
+              activeTab === 'showcase'
+                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
+                : 'text-text-muted hover:text-text-primary'
+            }`}
+          >
+            <span className="w-2 h-2 rounded-full bg-amber-400" />
+            Judge Showcase (Recorded Evidence)
+          </button>
+        </div>
+      )}
 
       {/* Telemetry & Badges */}
       <div className="flex items-center flex-wrap gap-2.5">
