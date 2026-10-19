@@ -110,6 +110,17 @@ VulnTrace synthesizes reproduction harnesses to confirm whether an application i
    - Verifying expected exception signatures (e.g., `ConstructorError`, `SafeLoader` block).
 5. **Parent-Validated Proof:** The presence or absence of the physical sentinel file on disk is validated independently by the parent runner, not by trusting child stdout.
 
+### 5.1 Sink-Class Safety Scope & Milestone M7 Cut-Line
+
+In compliance with Rule 10 ("Behavioral probes only. No shells") and Canonical Specification §6 line 486 ("*Cut-line: drop change-request mode entirely; keep guided remediation. Command-injection class can drop before path-traversal*"):
+
+- **Supported & Production-Verified Sink Classes:**
+  1. `UNSAFE_DESERIALIZATION`: PyYAML / YAML unsafe object instantiation, AST-aware contextual subclassing (`AppSafeLoader`), and exact constructor blocking (`ConstructorError`).
+  2. `PATH_TRAVERSAL`: Tar slip archive extraction (`TarPathTraversalOracle`), zip safe control (`ZipSafeControlOracle`), and path resolution containment with workspace-bound canary verification.
+- **Frozen Sink Class (Command Injection):**
+  - Command Injection reproduction harnesses typically evaluate shell execution (`subprocess`, `os.system`). Because invoking system command shells violates Rule 10's prohibition against interactive shells and subshells, Command Injection is frozen and disabled.
+  - **Honest Milestone Accounting:** VulnTrace formally operates under the authorized two-class cut-line (Deserialization + Path Traversal). Literal completion of the three-class M7 criterion is not claimed; the third sink class remains intentionally absent to preserve foundational safety guarantees.
+
 ---
 
 ## 6. Threat Model

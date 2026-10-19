@@ -2,6 +2,14 @@
 
 All major project updates and milestone completions throughout development.
 
+## [Phase 8D] M7 Cut-Line Formalization, M8 Replay Stepper, In-Browser Ed25519 Verification & 3-Repeat Evidence — 2026-10-19
+- **Milestone M7 Cut-Line Formalization (Spec §6 line 486):** Formally enacted Option B cut-line dropping Command Injection to uphold Rule 10 ("Behavioral probes only. No shells"). Documented that M7 is completed with two deeply verified, production-grade sink classes: `UNSAFE_DESERIALIZATION` and `PATH_TRAVERSAL`. Acknowledged that literal 3-class completeness is not claimed.
+- **20/20 Bad-Patch Zoo Verification:** Maintained 100% detection of gaming attempts across 10 deserialization bad patches and 10 path-traversal bad patches with 0 false GREEN verdicts.
+- **Interactive 7-Stage Curated Replay Stepper:** Upgraded `RecordedEvidenceViewer.tsx` to include an accessible, keyboard-navigable 7-stage pipeline replay (`ENVBUILD` -> `REPRODUCTION` -> `REMEDIATION` -> `SCOPE_GUARD` -> `VERIFICATION` -> `REGRESSION` -> `EVIDENCE`) preserving all 5 deep links.
+- **In-Browser Ed25519 Cryptographic Verification:** Integrated client-side Web Crypto (`crypto.subtle`) verification validating RFC 8032 Ed25519 signatures and RFC 8785-compatible deterministic canonical hashes against the trusted VulnTrace authority public-key fingerprint (`fe9efb08...`).
+- **In-Memory Tamper Simulation:** Added an interactive "Simulate Payload Tamper" demonstration in the showcase UI, allowing evaluators to verify immediate cryptographic rejection (`PAYLOAD_TAMPERED`) in real-time without modifying disk assets.
+- **Genuine 3-Repeat Benchmark Protocol:** Implemented `bench/run_3repeat.py` and executed 3 independent passes per eligible case, recording results in `bench/observed_3x_runs.json` with unanimity semantics while strictly preserving `bench/raw_observations.json` and `bench/HELDOUT.md` byte-for-byte.
+
 ## [M7 Phase 2] Final Security-Evidence Closure — 2026-10-15
 - **Structured Canary Telemetry & Cross-Validation:** Synthesizer emits structured telemetry JSON (`_acceptance_telemetry.json`) alongside stdout. The pipeline enforces dual-source canary verification: parent filesystem observation must strictly agree with container telemetry (`parent_canary_observed == telemetry_canary_observed`). Missing, malformed, or contradictory telemetry fails closed with explicit error classifications (`MALFORMED_TELEMETRY`, `CONTRADICTORY_CANARY_EVIDENCE`, `CANARY_NOT_CREATED`).
 - **Exact Exception & Repaired GREEN Validation:** Replaced loose exception checks with exact constructor-blocking exception matching (`yaml.constructor.ConstructorError`). Valid repaired GREEN requires all acceptance assertions to pass, probe blocked (`probe_blocked=True`), canary absent on disk and in telemetry (`canary_created=False`), custom tags preserved (`test_preserve_custom_tags PASSED`), and benign config verified (`test_standard_benign_config_loads_cleanly PASSED`).
