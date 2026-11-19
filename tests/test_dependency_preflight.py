@@ -19,6 +19,32 @@ from vulntrace.sandbox.target_env import (
 class TestDependencyPreflightRequirementsParser:
     """Tests 1-5: Requirements parser and security boundary tests."""
 
+    @pytest.fixture(autouse=True)
+    def mock_sandbox_runtime(self):
+        from packaging.version import Version
+        from vulntrace.core.container_backend import SandboxRuntimeData
+        mock_data = SandboxRuntimeData(
+            image_digest="sha256:5e1803c65dbcc4cee05d1b68a9539f1b2b731e1d7dfeb3bb3d1b191ec03e64dc",
+            packages={
+                "pytest": Version("7.4.4"),
+                "pyyaml": Version("6.0.1"),
+                "setuptools": Version("68.1.2"),
+                "wheel": Version("0.41.2")
+            },
+            markers={
+                "os_name": "posix",
+                "sys_platform": "linux",
+                "platform_machine": "x86_64",
+                "platform_python_implementation": "CPython",
+                "python_version": "3.12",
+                "python_full_version": "3.12.3",
+                "platform_system": "Linux",
+                "implementation_name": "cpython"
+            }
+        )
+        with patch.object(ContainerExecutionBackend, "get_sandbox_runtime_data", return_value=mock_data):
+            yield
+
     @pytest.mark.asyncio
     async def test_recursive_requirements_detects_nested_missing_dependencies(self, tmp_path):
         """1. Recursive requirements detect missing nested dependencies."""
@@ -111,6 +137,32 @@ class TestDependencyPreflightRequirementsParser:
 
 class TestDependencyPreflightVersionAndMarkerEvaluation:
     """Tests 6-11: Version comparison, environment markers, extras, and direct URLs."""
+
+    @pytest.fixture(autouse=True)
+    def mock_sandbox_runtime(self):
+        from packaging.version import Version
+        from vulntrace.core.container_backend import SandboxRuntimeData
+        mock_data = SandboxRuntimeData(
+            image_digest="sha256:5e1803c65dbcc4cee05d1b68a9539f1b2b731e1d7dfeb3bb3d1b191ec03e64dc",
+            packages={
+                "pytest": Version("7.4.4"),
+                "pyyaml": Version("6.0.1"),
+                "setuptools": Version("68.1.2"),
+                "wheel": Version("0.41.2")
+            },
+            markers={
+                "os_name": "posix",
+                "sys_platform": "linux",
+                "platform_machine": "x86_64",
+                "platform_python_implementation": "CPython",
+                "python_version": "3.12",
+                "python_full_version": "3.12.3",
+                "platform_system": "Linux",
+                "implementation_name": "cpython"
+            }
+        )
+        with patch.object(ContainerExecutionBackend, "get_sandbox_runtime_data", return_value=mock_data):
+            yield
 
     @pytest.mark.asyncio
     async def test_compatible_installed_versions_pass(self, tmp_path):
@@ -381,7 +433,8 @@ class TestDependencyPreflightCacheAndAttestation:
             use_nemotron=False,
         )
 
-        with patch.object(ContainerExecutionBackend, "get_sandbox_runtime_data", return_value=None):
+        with patch("vulntrace.sandbox.pipeline.BackendFactory.resolve_best_available_backend", return_value=ContainerExecutionBackend()), \
+             patch.object(ContainerExecutionBackend, "get_sandbox_runtime_data", return_value=None):
             res = await VerificationPipeline.run_pipeline(req)
             assert res.final_behavioral_verdict == "ENV_BUILD_FAILED"
             assert res.reachability_verdict == "NOT_EVALUATED"

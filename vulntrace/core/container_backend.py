@@ -544,7 +544,7 @@ class ContainerExecutionBackend(ExecutionBackend):
                 # PEP 508 Marker Evaluation
                 if req.marker:
                     try:
-                        if not req.marker.evaluate(environment=runtime_data.markers):
+                        if runtime_data is not None and not req.marker.evaluate(environment=runtime_data.markers):
                             # Marker evaluated to False: dependency not required in this runtime
                             continue
                     except Exception as e:
@@ -560,11 +560,14 @@ class ContainerExecutionBackend(ExecutionBackend):
                     continue
 
                 # Check sandbox package inventory
-                if canon_name in runtime_data.packages:
-                    installed_ver = runtime_data.packages[canon_name]
-                    if req.specifier and not req.specifier.contains(installed_ver, prereleases=True):
-                        missing_deps.append(f"{dep_clean} (installed {installed_ver} does not satisfy {req.specifier})")
-                else:
+                if runtime_data is not None:
+                    if canon_name in runtime_data.packages:
+                        installed_ver = runtime_data.packages[canon_name]
+                        if req.specifier and not req.specifier.contains(installed_ver, prereleases=True):
+                            missing_deps.append(f"{dep_clean} (installed {installed_ver} does not satisfy {req.specifier})")
+                    else:
+                        missing_deps.append(dep_clean)
+                elif not is_curated:
                     missing_deps.append(dep_clean)
 
         # If any requirement is missing, incompatible, or invalid, fail closed immediately
