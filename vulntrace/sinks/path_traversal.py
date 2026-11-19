@@ -259,11 +259,21 @@ class TarPathTraversalOracle(BaseSinkOracle):
     def get_harness_import_block(self) -> str:
         return (
             "import tarfile\n"
+            "import io\n"
+            "import time\n"
             "sec_block_types = (\n"
             "    ValueError,\n"
             "    PermissionError,\n"
             "    getattr(tarfile, 'FilterError', ValueError),\n"
             ")\n"
+            "def _create_tar(path, name, data=b'canary\\n'):\n"
+            "    with tarfile.open(path, 'w') as t:\n"
+            "        ti = tarfile.TarInfo(name=str(name))\n"
+            "        ti.size = len(data)\n"
+            "        ti.mtime = int(time.time())\n"
+            "        ti.mode = 0o644\n"
+            "        t.addfile(ti, io.BytesIO(data))\n"
+            "    return str(path)\n"
         )
 
 

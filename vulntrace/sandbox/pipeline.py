@@ -51,6 +51,7 @@ from vulntrace.sinks import SinkOracleRegistry
 from vulntrace.llm.ledger import TokenLedger
 from vulntrace.llm.client import TokenFactoryClient
 from vulntrace.llm.tier import LLMModelTier
+from vulntrace.config import settings
 
 class VerificationPipeline:
     """Executes end-to-end controlled defensive verification in disposable sandboxes."""
@@ -106,23 +107,48 @@ class VerificationPipeline:
         token_ledger = TokenLedger()
         tavily_client = TavilyClient()
 
-        emit("STAGE_START", "INTEL", f"Querying Threat Intelligence & security advisories for {req.cve_id}...")
-        try:
-            threat_intel = await tavily_client.query_threat_intel(req.cve_id)
-            if threat_intel.status == "degraded":
-                emit("LOG", "INTEL", f"Threat intelligence degraded: {threat_intel.error or 'provider unavailable'}. Falling back to default definitions.")
-            else:
-                emit("STAGE_COMPLETE", "INTEL", f"Threat intelligence resolved ({threat_intel.status}): {len(threat_intel.findings)} finding(s), symbols={threat_intel.affected_symbols}, hash={threat_intel.response_hash[:12]}...")
-        except Exception as e:
-            threat_intel = ThreatIntel(
+        if not req.query_tavily:
+            emit("LOG", "INTEL", "Tavily Threat Intelligence opt-in disabled; running in local advisory mode (OSV.dev / offline metadata).")
+            from vulntrace.intel.threat_intel import ThreatIntelNormalizer
+            threat_intel = ThreatIntelNormalizer.build_threat_intel(
                 cve_id=req.cve_id,
                 query=f'"{req.cve_id}" vulnerable function fix commit exploit',
-                timestamp=time.time(),
-                status="degraded",
-                error=str(e),
-                response_hash="none"
+                raw_items=[],
+                retained_findings=[],
+                status_code=200,
+                rejection_reasons=["Opt-in disabled by user."],
+                error_msg=None
             )
-            emit("LOG", "INTEL", f"Threat intelligence degraded due to unexpected error: {e}")
+        elif not settings.has_tavily:
+            emit("LOG", "INTEL", "Tavily Threat Intelligence API key not configured; running in local advisory mode (OSV.dev / offline metadata). Set TAVILY_API_KEY in .env to enable live search.")
+            from vulntrace.intel.threat_intel import ThreatIntelNormalizer
+            threat_intel = ThreatIntelNormalizer.build_threat_intel(
+                cve_id=req.cve_id,
+                query=f'"{req.cve_id}" vulnerable function fix commit exploit',
+                raw_items=[],
+                retained_findings=[],
+                status_code=401,
+                rejection_reasons=["Tavily API key not configured."],
+                error_msg="Tavily API key not configured."
+            )
+        else:
+            emit("STAGE_START", "INTEL", f"Querying Threat Intelligence & security advisories for {req.cve_id}...")
+            try:
+                threat_intel = await tavily_client.query_threat_intel(req.cve_id)
+                if threat_intel.status == "degraded":
+                    emit("LOG", "INTEL", f"Threat intelligence degraded: {threat_intel.error or 'provider unavailable'}. Falling back to default definitions.")
+                else:
+                    emit("STAGE_COMPLETE", "INTEL", f"Threat intelligence resolved ({threat_intel.status}): {len(threat_intel.findings)} finding(s), symbols={threat_intel.affected_symbols}, hash={threat_intel.response_hash[:12]}...")
+            except Exception as e:
+                threat_intel = ThreatIntel(
+                    cve_id=req.cve_id,
+                    query=f'"{req.cve_id}" vulnerable function fix commit exploit',
+                    timestamp=time.time(),
+                    status="degraded",
+                    error=str(e),
+                    response_hash="none"
+                )
+                emit("LOG", "INTEL", f"Threat intelligence degraded due to unexpected error: {e}")
 
         emit("STAGE_START", "SANDBOX", f"Initializing disposable workspace on backend ({backend.capabilities.tier.value})...")
         workspace_id = await backend.initialize_workspace(source_repo)
@@ -998,6 +1024,7 @@ class VerificationPipeline:
                 target_file=resolved_target_file,
                 vulnerable_call=resolved_vuln_sym,
                 use_nemotron=req.use_nemotron,
+                allow_ast_fallback=True,
                 advisory_summary=advisory_context
             )
             remediation_res = await RemediationPatcher.synthesize_remediation(

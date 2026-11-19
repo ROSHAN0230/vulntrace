@@ -20,7 +20,7 @@ interface StepLiveRunProps {
   verdict?: CanonicalVerdict | string;
   tokenLedger?: TokenLedgerSummary;
   error?: string;
-  onExecute: () => void;
+  onExecute: (options?: { use_nemotron: boolean; query_tavily: boolean }) => void;
   onProceedToEvidence: () => void;
 }
 
@@ -33,7 +33,7 @@ interface StageDefinition {
 const STAGES: StageDefinition[] = [
   { id: 'ENVBUILD', name: 'Environment Build', description: 'Tier-1 isolated virtualenv provisioning' },
   { id: 'REPRODUCTION', name: 'RED State Reproduction', description: 'Flake check: RED 1/3, 2/3, 3/3 confirmed' },
-  { id: 'REMEDIATION', name: 'Nemotron Remediation', description: 'Tier-3 Ultra surgical patch synthesis (N/3)' },
+  { id: 'REMEDIATION', name: 'Patch Remediation', description: 'Deterministic AST codemod or Nemotron synthesis' },
   { id: 'SCOPE_GUARD', name: 'Scope Guard Budget', description: 'Line budget and file boundary check' },
   { id: 'VERIFICATION', name: 'GREEN State Verification', description: 'Flake check: GREEN 1/3, 2/3, 3/3 confirmed' },
   { id: 'REGRESSION', name: 'Regression Suite', description: 'Baseline vs after-patch comparison' },
@@ -52,6 +52,8 @@ export const StepLiveRun: React.FC<StepLiveRunProps> = ({
   onProceedToEvidence
 }) => {
   const terminalEndRef = useRef<HTMLDivElement>(null);
+  const [optInNemotron, setOptInNemotron] = React.useState(false);
+  const [optInTavily, setOptInTavily] = React.useState(false);
 
   // Auto-scroll terminal smoothly without layout shifting
   useEffect(() => {
@@ -105,7 +107,7 @@ export const StepLiveRun: React.FC<StepLiveRunProps> = ({
           {!isExecuting && !isCompleted && (
             <button
               type="button"
-              onClick={onExecute}
+              onClick={() => onExecute({ use_nemotron: optInNemotron, query_tavily: optInTavily })}
               className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs font-sans transition-all shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
             >
               <PlayCircle className="w-4 h-4" aria-hidden="true" />
@@ -125,6 +127,51 @@ export const StepLiveRun: React.FC<StepLiveRunProps> = ({
           )}
         </div>
       </div>
+
+      {/* Optional External Integrations Opt-In Panel */}
+      {!isExecuting && !isCompleted && (
+        <div className="rounded-lg border border-border-subtle bg-surface-2 p-3.5 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-sans font-bold text-slate-200">
+              External Integration Opt-In (API Optional)
+            </span>
+            <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/60">
+              Default: 100% Local Deterministic
+            </span>
+          </div>
+          <p className="text-[11px] font-sans text-slate-400 leading-relaxed">
+            By default, VulnTrace operates completely locally using deterministic AST codemods without external API calls.
+            Enabling optional integrations transmits relevant vulnerability code or advisory metadata to external providers and may incur provider charges.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+            <label className="flex items-start gap-2.5 p-2 rounded bg-surface-inset border border-border-subtle cursor-pointer hover:border-slate-600 transition-colors">
+              <input
+                type="checkbox"
+                checked={optInNemotron}
+                onChange={(e) => setOptInNemotron(e.target.checked)}
+                className="mt-0.5 rounded border-slate-700 text-emerald-500 focus:ring-emerald-400 bg-slate-900"
+              />
+              <div className="text-[11px] font-sans">
+                <span className="font-semibold text-slate-200 block">Enable NVIDIA Nemotron 3 Ultra</span>
+                <span className="text-slate-400 block text-[10px]">Multi-tier LLM patch synthesis via Nebius Token Factory (requires NEBIUS_API_KEY).</span>
+              </div>
+            </label>
+
+            <label className="flex items-start gap-2.5 p-2 rounded bg-surface-inset border border-border-subtle cursor-pointer hover:border-slate-600 transition-colors">
+              <input
+                type="checkbox"
+                checked={optInTavily}
+                onChange={(e) => setOptInTavily(e.target.checked)}
+                className="mt-0.5 rounded border-slate-700 text-emerald-500 focus:ring-emerald-400 bg-slate-900"
+              />
+              <div className="text-[11px] font-sans">
+                <span className="font-semibold text-slate-200 block">Enable Tavily Threat Intelligence</span>
+                <span className="text-slate-400 block text-[10px]">Real-time web vulnerability and PoC search (requires TAVILY_API_KEY).</span>
+              </div>
+            </label>
+          </div>
+        </div>
+      )}
 
       {/* Top Telemetry & Status Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
@@ -163,7 +210,7 @@ export const StepLiveRun: React.FC<StepLiveRunProps> = ({
             </span>
           </div>
           <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 pt-0.5">
-            <span>Model: Nemotron-70B (Tier-3)</span>
+            <span>Engine: {tokenLedger && tokenLedger.total_tokens > 0 ? 'Nemotron-70B (Tier-3)' : 'AST Codemod (Local)'}</span>
             <span>Latency: {tokenLedger && tokenLedger.latency_ms > 0 ? `${tokenLedger.latency_ms.toFixed(0)}ms` : '—'}</span>
           </div>
         </div>

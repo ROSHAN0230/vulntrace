@@ -1,7 +1,7 @@
 # VulnTrace
 
 **Autonomous Vulnerability Reproduction and Verified Patching Agent**<br>
-**Hackathon Track:** Coding and Agentic Engineering
+**Architecture:** Autonomous Verification & Proof-Carrying Remediation
 
 ---
 
@@ -246,12 +246,20 @@ The sections below illustrate VulnTrace's verification and remediation capabilit
 
 ---
 
-## 9. Clean-Room Setup Instructions
+## 9. Clean-Room Setup Instructions — Local-First, Zero-Key Installation
 
-### Prerequisites
-- Python 3.11+ (Tested on Python 3.14.2)
-- Node.js 18+ and npm
-- Git
+VulnTrace is designed as a **Local-First, API-Optional** security engineering application. The entire core workflow—including static reachability analysis, controlled sandbox reproduction, deterministic AST patch synthesis, post-patch verification, and cryptographic evidence signing—operates completely locally on your workstation with **zero paid API subscriptions or keys required**.
+
+### Operating Systems & Prerequisites
+- **Validated Operating Systems:**
+  - **Ubuntu 24.04 LTS (x86_64)** — Primary development & validation platform.
+  - **Windows 11 with WSL2 (Ubuntu 24.04)** — Fully supported via WSL2.
+  *(Note: Native Windows without WSL2 and macOS do not support Tier 1 rootless OCI container primitives and are restricted to curated development fixtures under Tier 0).*
+- **System Dependencies:**
+  - Python 3.11 or 3.12 (with `python3.12-venv` or `python3.11-venv`)
+  - Node.js 18+ and `npm`
+  - Git
+  - Podman 4.9+ with `crun` and cgroups v2 (required for Tier 1 rootless container isolation on real-world/non-curated repositories)
 
 ### 1. Clone & Set Up Python Environment
 ```bash
@@ -262,67 +270,90 @@ cd vulntrace
 # If previously cloned without --recurse-submodules:
 git submodule update --init --recursive
 
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .\.venv\Scripts\activate
+# Create and activate Python virtual environment
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows WSL2: source .venv/bin/activate
 
-# Install dependencies
-pip install -e .
-pip install pytest httpx sse-starlette fastapi uvicorn pyyaml
+# Install VulnTrace and development dependencies
+pip install -e ".[dev]"
 ```
 
-### 2. Configure Environment Variables
-Copy `.env.example` to `.env` and provide your API keys:
-```env
-NEBIUS_API_KEY=your_nebius_api_key_here
-TAVILY_API_KEY=your_tavily_api_key_here
-CONTREE_API_KEY=your_contree_api_key_here
-```
-*(Note: Never commit secret keys. Local fallback mode functions if cloud credentials are absent).*
-
-### 3. Build Frontend & Launch Server
+### 2. Build Frontend Production Assets
 ```bash
 # Build React UI production bundle
 cd ui
 npm install
 npm run build
 cd ..
+```
 
-# Start FastAPI backend (serves API & React UI)
+### 3. Launch Local VulnTrace Application (No API Keys Required)
+```bash
+# Start FastAPI backend (serves both REST API and React UI)
 uvicorn vulntrace.server:app --host 127.0.0.1 --port 8000
 ```
 
 Open your browser to:
 - **Interactive Studio Workflow:** `http://127.0.0.1:8000`
-- **Judge Showcase (Recorded Evidence):** `http://127.0.0.1:8000/?view=showcase`<br>
-  *(Or click the `Judge Showcase (Recorded Evidence)` pill in the top header. Browsing recorded evidence is completely self-contained, offline-compatible, and executes zero billable API calls or host code).*
+- **Recorded Evidence Showcase:** `http://127.0.0.1:8000/?view=showcase`<br>
+  *(Or click the `Recorded Evidence Showcase` pill in the top header. Browsing recorded evidence is completely self-contained, offline-compatible, and executes zero billable API calls or host code).*
 
-### 4. Run Test Suite
+#### Alternative: Standalone Release Wheel (Zero Build Tools Required)
+For users who do not require local frontend development tools (Node.js and npm), pre-packaged distribution archives with pre-compiled UI assets are published on the [GitHub v0.1.0 Release](https://github.com/ROSHAN0230/vulntrace/releases/tag/v0.1.0):
+```bash
+# Install standalone wheel with pre-bundled UI into an isolated virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+pip install vulntrace-0.1.0-py3-none-any.whl
 
-VulnTrace structures testing into four distinct execution modes based on test markers and platform capabilities:
+# Start application directly (serves pre-bundled React UI without Node.js)
+uvicorn vulntrace.server:app --host 127.0.0.1 --port 8000
+```
+
+### 4. Optional Cloud Integrations (`.env`)
+Configuring a `.env` file is **completely optional**. VulnTrace runs out-of-the-box in local deterministic mode without it.
+
+If you choose to use optional cloud integrations:
+```bash
+cp .env.example .env
+```
+Available optional integrations:
+- `NEBIUS_API_KEY`: Enables NVIDIA Nemotron 3 Ultra contextual codemod generation.
+- `TAVILY_API_KEY`: Enables live search and threat intelligence enrichment.
+
+> [!IMPORTANT]
+> **Explicit Opt-In Required:** Supplying credentials in `.env` makes integrations **available**, but does **not** automatically enable them. External providers are strictly disabled by default for each run. Users must explicitly check the opt-in toggle in the UI or pass `use_nemotron: true` / `query_tavily: true` in the execution API request. When opt-ins are disabled or keys are absent, VulnTrace uses deterministic AST codemods (`UNSAFE_DESERIALIZATION`, `PATH_TRAVERSAL`) and local advisory metadata with zero external API calls.
+
+### 5. Run Test Suites
+
+VulnTrace structures testing into distinct execution modes based on test markers and platform capabilities:
 
 #### A. Fast Deterministic Offline Suite (Zero Containers, Zero Live Network)
-Executes all offline unit tests, AST call-graph reachability solvers, synthesis validators, verifier oracles, and adversarial fixture classification/containment checks. Requires only the standard Python virtual environment:
+Executes all offline unit tests, AST call-graph reachability solvers, synthesis validators, verifier oracles, and adversarial fixture classification/containment checks:
 ```bash
 pytest -v -m "not container and not live_network" tests/
 ```
 
-#### B. Live Container Isolation Suite (Tier 1 Rootless Sandbox)
+#### B. Dedicated Local-First / Zero-Key Acceptance Suite
+Validates that complete end-to-end vulnerability reproduction, deterministic AST remediation, verification, evidence signing, and opt-in boundaries function with zero API keys:
+```bash
+pytest -v tests/test_local_first_api_optional.py
+```
+
+#### C. Live Container Isolation Suite (Tier 1 Rootless Sandbox)
 Executes rootless container isolation tests validating kernel network denial (`--network none`), read-only root filesystem (`--read-only`), ephemeral tmpfs scratch (`/tmp`), unprivileged user execution (`--user 1000:1000`), Linux capability dropping (`--cap-drop ALL`), and cgroup resource limits.  
 *Requirements:* Linux or WSL2 with rootless Podman and pre-baked `vulntrace-sandbox-base:latest` OCI image:
 ```bash
 pytest -v -m "container" tests/
 ```
 
-#### C. Live Network Integration Suite (Threat Intelligence & Advisory APIs)
-Executes live integration tests against external services (OSV.dev advisory lookups, Tavily Search API, and Nebius Token Factory).  
-*Requirements:* Outbound internet connectivity and active credentials in `.env` (`TAVILY_API_KEY`, `NEBIUS_API_KEY`):
+#### D. Benchmark Verification Gate (0-Drift Integrity Check)
+Verifies that README evaluation tables deterministically match empirical ground-truth benchmark observations:
 ```bash
-pytest -v -m "live_network" tests/
+python bench/run.py --ci
 ```
 
-#### D. Complete Test Suite (All Modes Combined)
-Executes all repository tests across offline, container, and live-network categories:
+#### E. Complete Test Suite (All Modes Combined)
 ```bash
 pytest -v tests/
 ```

@@ -88,11 +88,11 @@ class HarnessSynthesizer:
 ]"""
         elif oracle and oracle.sink_class.value == "path_traversal":
             import_block = oracle.get_harness_import_block()
-            payload_expr = f'str(__import__("vulntrace.sinks.path_traversal", fromlist=["TarPathTraversalOracle"]).TarPathTraversalOracle.create_traversal_archive(Path("traversal_probe.tar"), "{sentinel_name}"))'
+            payload_expr = f'_create_tar(Path("traversal_probe.tar"), "../{sentinel_name}")'
             benign_suite_code = """[
     {
         "id": "benign_archive_extraction",
-        "input": str(__import__("vulntrace.sinks.path_traversal", fromlist=["TarPathTraversalOracle"]).TarPathTraversalOracle.create_benign_archive(Path("benign_test.tar"))),
+        "input": _create_tar(Path("benign_test.tar"), "config.json", b'{"status": "ok"}\\n'),
         "req_type": (dict, type(None)),
         "req_keys": [],
         "check": lambda r: (Path("extracted") / "config.json").exists()

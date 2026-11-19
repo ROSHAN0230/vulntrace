@@ -241,8 +241,8 @@ class VerificationPipelineRequest(BaseModel):
     vulnerable_symbol: Optional[str] = None
     sentinel_filename: Optional[str] = None
     entrypoints: List[str] = Field(default_factory=list)
-    use_nemotron: bool = True
-    query_tavily: bool = True
+    use_nemotron: bool = False
+    query_tavily: bool = False
     advisory_summary: Optional[str] = None
     execution_backend: Optional[str] = None
     require_high_assurance: bool = False

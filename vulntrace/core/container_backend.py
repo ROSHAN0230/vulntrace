@@ -5,22 +5,41 @@ with kernel-level network denial (--network none), host filesystem hiding, cgrou
 and unforgeable parent-generated execution attestation.
 """
 
+import os
+import re
 import sys
+import json
 import time
 import uuid
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Callable, Tuple
+from typing import Dict, Any, Optional, List, Callable, Tuple, Set
+
+from packaging.requirements import Requirement, InvalidRequirement
+from packaging.version import Version
+from packaging.utils import canonicalize_name
 
 from vulntrace.core.backend import (
     ExecutionBackend,
     BackendCapabilities,
     IsolationTier,
     ExecutionAttestation,
-    ExecutionCommandResult
+    ExecutionCommandResult,
+    is_curated_fixture,
 )
 from vulntrace.sandbox.runner import SubprocessSandboxRunner
-from vulntrace.sandbox.target_env import TargetEnvironmentManager
+from vulntrace.sandbox.target_env import (
+    ManifestClassification,
+    TargetEnvironmentManager,
+)
+
+
+@dataclass(frozen=True)
+class SandboxRuntimeData:
+    image_digest: str
+    packages: Dict[str, Version]
+    markers: Dict[str, str]
 
 
 class ContainerExecutionBackend(ExecutionBackend):
@@ -33,17 +52,121 @@ class ContainerExecutionBackend(ExecutionBackend):
     DEFAULT_TIMEOUT = 10.0
     _cached_available: Dict[Tuple[str, ...], bool] = {}
     _cached_image_digest: Dict[Tuple[str, ...], str] = {}
+    _cached_runtime_version: Dict[Tuple[str, ...], str] = {}
+    _cached_runtime_data: Dict[Tuple[str, ...], SandboxRuntimeData] = {}
+    _cached_sandbox_packages: Optional[Set[str]] = None
+    _workspace_source_map: Dict[str, Path] = {}
+
+    @staticmethod
+    def _normalize_pkg_name(dep_str: str) -> str:
+        """Extracts canonical package name from a dependency requirement string."""
+        raw = re.split(r"[><=~!;\s]", dep_str.strip())[0].strip().lower()
+        return canonicalize_name(raw)
+
+    def get_sandbox_runtime_data(self, fresh: bool = False) -> Optional[SandboxRuntimeData]:
+        """
+        Retrieves the verified package inventory and PEP 508 runtime markers
+        from the canonical sandbox image, strictly bound to the image digest.
+        Caches the parsed result across invocations.
+        Fails closed (returns None) if the live query fails; unverified fallbacks are prohibited.
+        """
+        digest = self.get_image_digest()
+        if not digest:
+            return None
+
+        prefix = tuple(self._build_cli_prefix())
+        cache_key = (digest, *prefix)
+
+        if not fresh and cache_key in self.__class__._cached_runtime_data:
+            return self.__class__._cached_runtime_data[cache_key]
+
+        packages: Dict[str, Version] = {}
+        markers: Dict[str, str] = {}
+
+        try:
+            query_script = (
+                "import importlib.metadata, json, platform, sys, os; "
+                "pkgs = {d.metadata['Name']: d.version for d in importlib.metadata.distributions() if 'Name' in d.metadata}; "
+                "markers = {"
+                "'os_name': os.name, "
+                "'sys_platform': sys.platform, "
+                "'platform_machine': platform.machine(), "
+                "'platform_python_implementation': platform.python_implementation(), "
+                "'python_version': '.'.join(platform.python_version_tuple()[:2]), "
+                "'python_full_version': platform.python_version(), "
+                "'platform_system': platform.system(), "
+                "'implementation_name': sys.implementation.name"
+                "}; "
+                "print(json.dumps({'packages': pkgs, 'markers': markers}))"
+            )
+            cmd = self._build_cli_prefix() + [
+                "podman", "run", "--rm",
+                "--network", "none",
+                self.IMAGE_NAME,
+                "python3", "-c", query_script
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=10.0)
+            if res.returncode == 0 and res.stdout.strip():
+                for line in reversed(res.stdout.strip().splitlines()):
+                    line = line.strip()
+                    if line.startswith("{") and line.endswith("}"):
+                        data = json.loads(line)
+                        if isinstance(data, dict):
+                            raw_pkgs = data.get("packages", {})
+                            if isinstance(raw_pkgs, dict):
+                                for pkg_name, pkg_ver_str in raw_pkgs.items():
+                                    try:
+                                        c_name = canonicalize_name(pkg_name)
+                                        packages[c_name] = Version(str(pkg_ver_str))
+                                    except Exception:
+                                        continue
+                            raw_markers = data.get("markers", {})
+                            if isinstance(raw_markers, dict):
+                                for k, v in raw_markers.items():
+                                    markers[str(k)] = str(v)
+                        break
+        except Exception:
+            pass
+
+        # Strict fail-closed: If query failed to retrieve packages or markers, do NOT use unverified fallback
+        if not packages or not markers:
+            return None
+
+        data = SandboxRuntimeData(
+            image_digest=digest,
+            packages=packages,
+            markers=markers,
+        )
+        self.__class__._cached_runtime_data[cache_key] = data
+        return data
+
+    def get_sandbox_available_packages(self) -> Set[str]:
+        """
+        Returns the set of canonical package names pre-installed in the canonical sandbox image.
+        Maintains backward compatibility with callers expecting a Set[str].
+        """
+        data = self.get_sandbox_runtime_data()
+        if data is None:
+            return set()
+        names = set(data.packages.keys())
+        return names | {k.replace("-", "_") for k in names}
 
     def __init__(self, wsl_distro: Optional[str] = "Ubuntu"):
         self.wsl_distro = wsl_distro
         self._image_digest: Optional[str] = None
         self._is_available: Optional[bool] = None
+        self._runtime_version: Optional[str] = None
+        self._verified_runtime: bool = False
 
     @classmethod
     def clear_availability_cache(cls) -> None:
-        """Clears class-level availability and digest caches."""
+        """Clears class-level availability, digest, runtime version, and runtime data caches."""
         cls._cached_available.clear()
         cls._cached_image_digest.clear()
+        cls._cached_runtime_version.clear()
+        cls._cached_runtime_data.clear()
+        cls._cached_sandbox_packages = None
+        cls._workspace_source_map.clear()
 
     @classmethod
     def to_wsl_path(cls, path: Path) -> str:
@@ -55,34 +178,151 @@ class ContainerExecutionBackend(ExecutionBackend):
             return f"/mnt/{drive}{rest}"
         return path_str
 
-    def is_available(self) -> bool:
-        """Checks whether Podman is accessible in the environment and base sandbox image exists."""
-        if self._is_available is not None:
+    def _get_cache_key(self) -> Tuple[str, ...]:
+        """Returns the cache key tuple including CLI prefix and remote connection environment variables."""
+        prefix = list(self._build_cli_prefix())
+        container_host = os.environ.get("CONTAINER_HOST", "").strip()
+        container_conn = os.environ.get("CONTAINER_CONNECTION", "").strip()
+        return tuple(prefix + [f"host={container_host}", f"conn={container_conn}"])
+
+    def _record_unavailable(self, cache_key: Tuple[str, ...], cache_class: bool = True) -> None:
+        """Helper to record unavailable status across class and instance caches."""
+        if cache_class:
+            ContainerExecutionBackend._cached_available[cache_key] = False
+            ContainerExecutionBackend._cached_runtime_version[cache_key] = None
+        self._is_available = False
+        self._runtime_version = None
+        self._verified_runtime = False
+
+    def is_available(self, fresh: bool = False) -> bool:
+        """
+        Checks whether rootless Podman with crun, cgroups v2, and the base sandbox
+        image is fully accessible and verified on the current host.
+        Fails closed on any missing, malformed, or unverified runtime requirement.
+        """
+        cache_key = self._get_cache_key()
+
+        # Strict local-runtime: immediately reject remote environment variables
+        if bool(os.environ.get("CONTAINER_HOST", "").strip()) or bool(os.environ.get("CONTAINER_CONNECTION", "").strip()):
+            self._record_unavailable(cache_key)
+            return False
+
+        if not fresh and self._is_available is not None:
             return self._is_available
 
-        prefix_key = tuple(self._build_cli_prefix())
-        if prefix_key in ContainerExecutionBackend._cached_available:
-            self._is_available = ContainerExecutionBackend._cached_available[prefix_key]
+        if not fresh and cache_key in ContainerExecutionBackend._cached_available:
+            self._is_available = ContainerExecutionBackend._cached_available[cache_key]
+            self._runtime_version = ContainerExecutionBackend._cached_runtime_version.get(cache_key)
+            self._verified_runtime = bool(self._is_available)
             return self._is_available
 
         try:
-            cmd_ver = list(prefix_key) + ["podman", "--version"]
+            prefix_cmd = list(self._build_cli_prefix())
+
+            # 1. Podman CLI invocation and strict version capture
+            cmd_ver = prefix_cmd + ["podman", "--version"]
             proc_ver = subprocess.run(cmd_ver, capture_output=True, text=True, timeout=15)
-            if proc_ver.returncode != 0:
-                ContainerExecutionBackend._cached_available[prefix_key] = False
-                self._is_available = False
+            if proc_ver.returncode != 0 or not proc_ver.stdout.strip():
+                self._record_unavailable(cache_key)
                 return False
 
-            cmd_img = list(prefix_key) + ["podman", "image", "exists", self.IMAGE_NAME]
-            proc_img = subprocess.run(cmd_img, capture_output=True, text=True, timeout=15)
-            available = (proc_img.returncode == 0)
-            ContainerExecutionBackend._cached_available[prefix_key] = available
-            self._is_available = available
-        except Exception:
-            ContainerExecutionBackend._cached_available[prefix_key] = False
-            self._is_available = False
+            raw_stdout = proc_ver.stdout.strip()
+            lines = raw_stdout.splitlines()
+            if not lines:
+                self._record_unavailable(cache_key)
+                return False
 
-        return self._is_available
+            first_line = lines[0].strip()
+            version_match = re.fullmatch(
+                r"podman(?:\s+version)?\s+([0-9]+(?:\.[0-9]+)+(?:[-+~.a-zA-Z0-9]+)?)",
+                first_line,
+                re.IGNORECASE
+            )
+            if not version_match:
+                self._record_unavailable(cache_key)
+                return False
+
+            captured_version = f"podman {version_match.group(1).strip()}"
+
+            # 2. Inspect host runtime properties via podman info --format json
+            cmd_info = prefix_cmd + ["podman", "info", "--format", "json"]
+            proc_info = subprocess.run(cmd_info, capture_output=True, text=True, timeout=15)
+            if proc_info.returncode != 0 or not proc_info.stdout.strip():
+                self._record_unavailable(cache_key)
+                return False
+
+            stdout_info = proc_info.stdout.strip()
+            if not stdout_info:
+                self._record_unavailable(cache_key)
+                return False
+
+            try:
+                info_data = json.loads(stdout_info)
+            except Exception:
+                self._record_unavailable(cache_key)
+                return False
+
+            if not isinstance(info_data, dict):
+                self._record_unavailable(cache_key)
+                return False
+
+            host = info_data.get("host")
+            if not isinstance(host, dict):
+                self._record_unavailable(cache_key)
+                return False
+
+            # 3. Explicit rootless verification
+            security = host.get("security")
+            if not isinstance(security, dict) or security.get("rootless") is not True:
+                self._record_unavailable(cache_key)
+                return False
+
+            # 4. Explicit crun OCI runtime verification
+            oci = host.get("ociRuntime") or host.get("ociruntime")
+            if not isinstance(oci, dict):
+                self._record_unavailable(cache_key)
+                return False
+            oci_name = str(oci.get("name", "")).strip().lower()
+            if oci_name != "crun":
+                self._record_unavailable(cache_key)
+                return False
+
+            # 5. Explicit cgroups v2 verification
+            cgroup_ver = str(host.get("cgroupVersion", "")).strip().lower()
+            if cgroup_ver != "v2":
+                self._record_unavailable(cache_key)
+                return False
+
+            # 6. Explicit cgroup controllers verification (cpu, memory, pids)
+            controllers = [str(c).strip().lower() for c in host.get("cgroupControllers", [])]
+            required_controllers = {"cpu", "memory", "pids"}
+            if not required_controllers.issubset(set(controllers)):
+                self._record_unavailable(cache_key)
+                return False
+
+            # 7. Local runtime verification (serviceIsRemote must explicitly equal False)
+            if host.get("serviceIsRemote") is not False:
+                self._record_unavailable(cache_key)
+                return False
+
+            # 8. Local sandbox base image existence verification
+            cmd_img = prefix_cmd + ["podman", "image", "exists", self.IMAGE_NAME]
+            proc_img = subprocess.run(cmd_img, capture_output=True, text=True, timeout=15)
+            if proc_img.returncode != 0:
+                self._record_unavailable(cache_key, cache_class=False)
+                return False
+
+            # All mandatory Tier 1 preflight checks satisfied
+            ContainerExecutionBackend._cached_available[cache_key] = True
+            ContainerExecutionBackend._cached_runtime_version[cache_key] = captured_version
+            self._is_available = True
+            self._runtime_version = captured_version
+            self._verified_runtime = True
+            return True
+
+        except Exception:
+            self._record_unavailable(cache_key)
+            return False
 
     def _build_cli_prefix(self) -> List[str]:
         """Returns command prefix (e.g. ['wsl', '-d', 'Ubuntu'] on Windows, or [] on Linux)."""
@@ -90,32 +330,34 @@ class ContainerExecutionBackend(ExecutionBackend):
             return ["wsl", "-d", self.wsl_distro]
         return []
 
-    def get_image_digest(self) -> str:
-        """Returns the sha256 image digest of the sandbox base image."""
-        if self._image_digest:
+    def get_image_digest(self, fresh: bool = False) -> Optional[str]:
+        """Returns the verified sha256 image digest of the sandbox base image, or None if unavailable."""
+        if not fresh and self._image_digest:
             return self._image_digest
 
-        prefix_key = tuple(self._build_cli_prefix())
-        if prefix_key in ContainerExecutionBackend._cached_image_digest:
-            self._image_digest = ContainerExecutionBackend._cached_image_digest[prefix_key]
+        cache_key = self._get_cache_key()
+        if not fresh and cache_key in ContainerExecutionBackend._cached_image_digest:
+            self._image_digest = ContainerExecutionBackend._cached_image_digest[cache_key]
             return self._image_digest
 
+        prefix_cmd = list(self._build_cli_prefix())
         try:
-            cmd = list(prefix_key) + [
-                "podman", "inspect", "--format", "{{.Id}}", self.IMAGE_NAME
+            cmd = prefix_cmd + [
+                "podman", "image", "inspect", "--format", "{{.Digest}}", self.IMAGE_NAME
             ]
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
             if proc.returncode == 0 and proc.stdout.strip():
-                digest = proc.stdout.strip()
-                ContainerExecutionBackend._cached_image_digest[prefix_key] = digest
-                self._image_digest = digest
-                return self._image_digest
+                raw_digest = proc.stdout.strip().strip("'\"")
+                if re.fullmatch(r"sha256:[0-9a-fA-F]{64}", raw_digest):
+                    ContainerExecutionBackend._cached_image_digest[cache_key] = raw_digest
+                    self._image_digest = raw_digest
+                    return self._image_digest
         except Exception:
             pass
 
-        self._image_digest = "sha256:vulntrace-sandbox-base-local"
-        ContainerExecutionBackend._cached_image_digest[prefix_key] = self._image_digest
-        return self._image_digest
+        self._image_digest = None
+        ContainerExecutionBackend._cached_image_digest.pop(cache_key, None)
+        return None
 
     def _kill_container(self, container_name: str) -> None:
         """Forcibly removes/kills a running container to prevent process leaks in WSL2/Linux."""
@@ -153,7 +395,9 @@ class ContainerExecutionBackend(ExecutionBackend):
     async def initialize_workspace(self, source_repo: Path) -> str:
         """Prepares a disposable directory copy on the host."""
         disposable_dir = SubprocessSandboxRunner.prepare_disposable_workspace(source_repo)
-        return str(disposable_dir.resolve())
+        disp_resolved = str(disposable_dir.resolve())
+        ContainerExecutionBackend._workspace_source_map[disp_resolved] = Path(source_repo).resolve()
+        return disp_resolved
 
     async def provision_dependencies(
         self,
@@ -164,21 +408,214 @@ class ContainerExecutionBackend(ExecutionBackend):
     ) -> ExecutionCommandResult:
         """
         Validates and provisions target dependencies inside the isolated container tier.
-        If the workspace contains setup.py or build hooks, they are executed strictly
-        inside the container with --network none, --cap-drop ALL, and no host credentials.
-        Common security verification dependencies (PyYAML, pytest) are pre-baked into the image.
+        Applies conservative static manifest inspection and image inventory preflight (Spec §4.5, §4.6).
+        Fails closed on dynamic unverified dependencies, unsupported directives, and missing packages.
+        If the workspace contains setup.py and dependencies are satisfied, setup.py build is executed
+        strictly inside the container with --network none, --cap-drop ALL, and no host credentials.
         """
         t0 = time.perf_counter()
         workspace_path = Path(workspace_id)
-        has_manifest, detected_deps = TargetEnvironmentManager.detect_dependencies(workspace_path)
         setup_py = workspace_path / "setup.py"
 
+        ws_resolved = str(workspace_path.resolve())
+        source_repo = ContainerExecutionBackend._workspace_source_map.get(ws_resolved)
+        is_curated = is_curated_fixture(source_repo) if source_repo else is_curated_fixture(workspace_path)
+
+        # 1. Conservative Manifest Inspection
+        inspection = TargetEnvironmentManager.inspect_manifests(workspace_path)
+        has_manifest = inspection.has_manifest
+        detected_deps = list(inspection.dependencies)
+
+        # Fail closed on invalid / ambiguous / dynamic manifests for untrusted repositories
+        if not is_curated and inspection.classification in (
+            ManifestClassification.DYNAMIC_UNVERIFIED,
+            ManifestClassification.UNSUPPORTED_OR_AMBIGUOUS,
+            ManifestClassification.PARSE_ERROR
+        ):
+            latency_ms = (time.perf_counter() - t0) * 1000.0
+            attestation = self.generate_attestation(workspace_id)
+            err_msg = (
+                f"Environment build failed: {inspection.classification.value} - "
+                f"{inspection.failure_reason or 'unsupported or ambiguous manifest'}"
+            )
+            return ExecutionCommandResult(
+                exit_code=1,
+                stdout=f"Manifest inspection failed: {inspection.classification.value}",
+                stderr=err_msg,
+                latency_ms=round(latency_ms, 2),
+                parent_validated=False,
+                validation_notes=f"Environment build failed: manifest classification {inspection.classification.value}",
+                structured_evidence={
+                    "has_manifest": has_manifest,
+                    "detected_dependencies": detected_deps,
+                    "missing_dependencies": detected_deps,
+                    "manifest_classification": inspection.classification.value,
+                    "failure_reason": inspection.failure_reason,
+                    "manifest_files": inspection.manifest_files,
+                    "provisioned": False,
+                    "image": self.IMAGE_NAME,
+                    "network_isolated": True,
+                    "setup_executed_in_container": False,
+                    "setup_latency_ms": round(latency_ms, 2),
+                    "build_duration_ms": round(latency_ms, 2),
+                    "python_version": "Python 3.12 (OCI Rootless Container)",
+                    "failure_classification": "ENV_BUILD_FAILED",
+                    "pip_log_excerpt": err_msg,
+                },
+                attestation=attestation,
+                error=err_msg
+            )
+
+        # 2. Collect and validate all declared requirements
+        all_declared_deps = list(dict.fromkeys(manifest_dependencies + detected_deps))
+        missing_deps: List[str] = []
+        parse_error_msg: Optional[str] = None
+
+        if all_declared_deps:
+            runtime_data = self.get_sandbox_runtime_data()
+            if runtime_data is None:
+                if not is_curated:
+                    latency_ms = (time.perf_counter() - t0) * 1000.0
+                    attestation = self.generate_attestation(workspace_id)
+                    err_msg = (
+                        "Environment build failed: unable to verify sandbox package inventory "
+                        "and runtime markers from container image. Unverified fallback is prohibited."
+                    )
+                    return ExecutionCommandResult(
+                        exit_code=1,
+                        stdout="Sandbox package inventory verification failed: unverified runtime.",
+                        stderr=err_msg,
+                        latency_ms=round(latency_ms, 2),
+                        parent_validated=False,
+                        validation_notes="Environment build failed: unverifiable sandbox runtime inventory",
+                        structured_evidence={
+                            "has_manifest": has_manifest,
+                            "detected_dependencies": detected_deps,
+                            "missing_dependencies": all_declared_deps,
+                            "manifest_classification": inspection.classification.value,
+                            "failure_reason": err_msg,
+                            "manifest_files": inspection.manifest_files,
+                            "provisioned": False,
+                            "image": self.IMAGE_NAME,
+                            "network_isolated": True,
+                            "setup_executed_in_container": False,
+                            "setup_latency_ms": round(latency_ms, 2),
+                            "build_duration_ms": round(latency_ms, 2),
+                            "python_version": "Python 3.12 (OCI Rootless Container)",
+                            "failure_classification": "ENV_BUILD_FAILED",
+                            "pip_log_excerpt": err_msg,
+                        },
+                        attestation=attestation,
+                        error=err_msg
+                    )
+
+            stdlib_names = getattr(sys, "stdlib_module_names", set())
+
+            for dep in all_declared_deps:
+                dep_clean = dep.strip()
+                if not dep_clean:
+                    continue
+
+                try:
+                    req = Requirement(dep_clean)
+                except InvalidRequirement as e:
+                    if not is_curated:
+                        parse_error_msg = f"Malformed dependency declaration '{dep_clean}': {e}"
+                        missing_deps.append(dep_clean)
+                        break
+                    continue
+
+                # Policy A: Extras require explicit dependency resolution
+                if req.extras:
+                    if not is_curated:
+                        parse_error_msg = f"Dependency with extras '{dep_clean}' is unsupported under offline Tier 1 container preflight (Policy A)."
+                        missing_deps.append(dep_clean)
+                        break
+                    continue
+
+                # Prohibit direct URL / VCS dependencies
+                if req.url:
+                    if not is_curated:
+                        parse_error_msg = f"Direct URL/VCS requirement '{dep_clean}' is prohibited under offline Tier 1 container policy."
+                        missing_deps.append(dep_clean)
+                        break
+                    continue
+
+                # PEP 508 Marker Evaluation
+                if req.marker:
+                    try:
+                        if not req.marker.evaluate(environment=runtime_data.markers):
+                            # Marker evaluated to False: dependency not required in this runtime
+                            continue
+                    except Exception as e:
+                        if not is_curated:
+                            parse_error_msg = f"PEP 508 marker evaluation failed for '{dep_clean}': {e}"
+                            missing_deps.append(dep_clean)
+                            break
+                        continue
+
+                canon_name = canonicalize_name(req.name)
+                # Check Python standard library modules
+                if canon_name in stdlib_names or req.name in stdlib_names or req.name.replace("-", "_") in stdlib_names:
+                    continue
+
+                # Check sandbox package inventory
+                if canon_name in runtime_data.packages:
+                    installed_ver = runtime_data.packages[canon_name]
+                    if req.specifier and not req.specifier.contains(installed_ver, prereleases=True):
+                        missing_deps.append(f"{dep_clean} (installed {installed_ver} does not satisfy {req.specifier})")
+                else:
+                    missing_deps.append(dep_clean)
+
+        # If any requirement is missing, incompatible, or invalid, fail closed immediately
+        if (missing_deps or parse_error_msg) and not is_curated:
+            latency_ms = (time.perf_counter() - t0) * 1000.0
+            attestation = self.generate_attestation(workspace_id)
+            missing_str = ", ".join(sorted(missing_deps))
+            fail_reason = parse_error_msg or f"Missing or incompatible declared runtime dependencies inside OCI sandbox: {missing_str}"
+            err_msg = f"Environment build failed: {fail_reason}"
+            stdout = (
+                f"Declared dependencies missing or unsatisfied in OCI sandbox: {len(missing_deps)} ({missing_str}). "
+                f"Installation prohibited under --network none without offline wheel cache."
+            ).strip()
+
+            return ExecutionCommandResult(
+                exit_code=1,
+                stdout=stdout,
+                stderr=err_msg,
+                latency_ms=round(latency_ms, 2),
+                parent_validated=False,
+                validation_notes=f"Environment build failed: missing runtime dependencies [{missing_str}]",
+                structured_evidence={
+                    "has_manifest": has_manifest,
+                    "detected_dependencies": detected_deps,
+                    "missing_dependencies": missing_deps,
+                    "manifest_classification": inspection.classification.value,
+                    "failure_reason": fail_reason,
+                    "manifest_files": inspection.manifest_files,
+                    "provisioned": False,
+                    "image": self.IMAGE_NAME,
+                    "network_isolated": True,
+                    "setup_executed_in_container": False,
+                    "setup_latency_ms": round(latency_ms, 2),
+                    "build_duration_ms": round(latency_ms, 2),
+                    "python_version": "Python 3.12 (OCI Rootless Container)",
+                    "failure_classification": "ENV_BUILD_FAILED",
+                    "pip_log_excerpt": err_msg,
+                },
+                attestation=attestation,
+                error=err_msg
+            )
+
+        # 3. If setup.py exists and dependencies are satisfied, build in isolated container
         exit_code = 0
-        stdout = f"Dependencies provisioned in OCI base image ({len(detected_deps)} detected)."
+        stdout = f"Dependencies provisioned in OCI base image ({len(all_declared_deps)} validated)."
         stderr = ""
         setup_executed = False
 
         if setup_py.exists():
+            if not self.is_available(fresh=True):
+                raise RuntimeError("ContainerExecutionBackend preflight check failed: Tier 1 runtime requirements not satisfied.")
             setup_executed = True
             if on_log:
                 on_log("OCI Backend: Executing setup.py build inside isolated container tier (--network none, --cap-drop ALL)...")
@@ -192,6 +629,7 @@ class ContainerExecutionBackend(ExecutionBackend):
                 "--network", "none",
                 "--read-only",
                 "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
+                "--userns", "keep-id",
                 "--user", "1000:1000",
                 "--memory", "512m",
                 "--cpus", "1.0",
@@ -234,11 +672,19 @@ class ContainerExecutionBackend(ExecutionBackend):
 
         latency_ms = (time.perf_counter() - t0) * 1000.0
         attestation = self.generate_attestation(workspace_id)
+
         parent_validated = (exit_code == 0)
+        provisioned = (exit_code == 0)
+        failure_classification = "ENV_BUILD_FAILED" if exit_code != 0 else None
+        pip_log_excerpt = stderr if exit_code != 0 else None
         validation_notes = (
             "OCI container workspace setup.py built under isolated container tier."
             if setup_executed and exit_code == 0
-            else ("OCI container image pre-provisioned with verified runtime dependencies." if exit_code == 0 else f"OCI container setup.py failed with code {exit_code}")
+            else (
+                "OCI container image pre-provisioned with verified runtime dependencies."
+                if exit_code == 0
+                else f"OCI container setup.py failed with code {exit_code}"
+            )
         )
 
         return ExecutionCommandResult(
@@ -251,15 +697,17 @@ class ContainerExecutionBackend(ExecutionBackend):
             structured_evidence={
                 "has_manifest": has_manifest,
                 "detected_dependencies": detected_deps,
-                "provisioned": (exit_code == 0),
+                "missing_dependencies": missing_deps,
+                "manifest_classification": inspection.classification.value,
+                "provisioned": provisioned,
                 "image": self.IMAGE_NAME,
                 "network_isolated": True,
                 "setup_executed_in_container": setup_executed,
                 "setup_latency_ms": round(latency_ms, 2),
                 "build_duration_ms": round(latency_ms, 2),
                 "python_version": "Python 3.12 (OCI Rootless Container)",
-                "failure_classification": "ENV_BUILD_FAILED" if exit_code != 0 else None,
-                "pip_log_excerpt": stderr if exit_code != 0 else None,
+                "failure_classification": failure_classification,
+                "pip_log_excerpt": pip_log_excerpt,
             },
             attestation=attestation,
             error=stderr if exit_code != 0 else None
@@ -278,6 +726,8 @@ class ContainerExecutionBackend(ExecutionBackend):
         read-only root FS, tmpfs scratch, unprivileged non-root user, cgroup limits,
         and parent-side filesystem validation.
         """
+        if not self.is_available(fresh=True):
+            raise RuntimeError("ContainerExecutionBackend preflight check failed: Tier 1 runtime requirements not satisfied.")
         t0 = time.perf_counter()
         workspace_path = Path(workspace_id)
         wsl_path = self.to_wsl_path(workspace_path)
@@ -300,6 +750,7 @@ class ContainerExecutionBackend(ExecutionBackend):
             "--network", "none",
             "--read-only",
             "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
+            "--userns", "keep-id",
             "--user", "1000:1000",
             "--memory", "512m",
             "--cpus", "1.0",
@@ -414,6 +865,7 @@ class ContainerExecutionBackend(ExecutionBackend):
             "--network", "none",
             "--read-only",
             "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
+            "--userns", "keep-id",
             "--user", "1000:1000",
             "--memory", "512m",
             "--cpus", "1.0",
@@ -436,6 +888,8 @@ class ContainerExecutionBackend(ExecutionBackend):
         cmd.extend(["-v", "--no-header"])
 
         try:
+            if not self.is_available(fresh=True):
+                raise RuntimeError("ContainerExecutionBackend preflight check failed: Tier 1 runtime requirements not satisfied.")
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
             passed = (proc.returncode == 0)
             latency_ms = (time.perf_counter() - t0) * 1000.0
@@ -488,10 +942,22 @@ class ContainerExecutionBackend(ExecutionBackend):
     def generate_attestation(self, workspace_id: str, container_name: Optional[str] = None) -> ExecutionAttestation:
         """Generates an unforgeable parent-validated execution attestation."""
         caps = self.capabilities
+        is_verified = (
+            getattr(self, "_verified_runtime", False)
+            and not bool(os.environ.get("CONTAINER_HOST", "").strip())
+            and not bool(os.environ.get("CONTAINER_CONNECTION", "").strip())
+        )
+        if is_verified:
+            runtime_engine = "podman_crun_rootless_wsl2" if sys.platform == "win32" else "podman_crun_rootless_linux"
+            runtime_version = self._runtime_version or "podman"
+        else:
+            runtime_engine = "podman_unverified"
+            runtime_version = "podman (unverified)"
+
         return ExecutionAttestation(
             backend_tier=caps.tier,
-            runtime_engine="podman_crun_rootless_wsl2" if sys.platform == "win32" else "podman_crun_rootless_linux",
-            runtime_version="podman 5.7.0",
+            runtime_engine=runtime_engine,
+            runtime_version=runtime_version,
             workspace_id=str(workspace_id),
             container_id=container_name,
             image_digest=self.get_image_digest(),

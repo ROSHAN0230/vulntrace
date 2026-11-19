@@ -188,7 +188,7 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             <span className="w-2 h-2 rounded-full bg-amber-400" />
-            Judge Showcase (Recorded Evidence)
+            Recorded Evidence Showcase
           </button>
         </div>
       )}
@@ -219,7 +219,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Provider Indicators */}
         <div className="hidden lg:flex items-center gap-2 pl-2.5 border-l border-border-subtle">
-          <div className="flex items-center gap-1.5" title={`Nemotron: ${health?.providers?.nebius_token_factory?.status || 'CHECKING'}`}>
+          <div className="flex items-center gap-1.5" title={`Nemotron: ${health?.providers?.nebius_token_factory?.status === 'ONLINE' ? 'ONLINE (Token Factory)' : 'Local AST Mode (API Key Optional)'}`}>
             <span
               className={`w-2 h-2 rounded-full ${
                 health?.providers?.nebius_token_factory?.status === 'ONLINE' ? 'bg-emerald-400' : 'bg-slate-500'
@@ -229,7 +229,7 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="text-[11px] font-sans font-medium text-slate-400">Nemotron</span>
           </div>
 
-          <div className="flex items-center gap-1.5 ml-1" title={`Tavily: ${health?.providers?.tavily_search?.status || 'CHECKING'}`}>
+          <div className="flex items-center gap-1.5 ml-1" title={`Tavily: ${health?.providers?.tavily_search?.status === 'ONLINE' ? 'ONLINE (Threat Intel)' : 'Local Advisory Mode (OSV.dev, API Key Optional)'}`}>
             <span
               className={`w-2 h-2 rounded-full ${
                 health?.providers?.tavily_search?.status === 'ONLINE' ? 'bg-emerald-400' : 'bg-slate-500'

@@ -750,8 +750,13 @@ async def approve_plan(run_id: str, req: ApprovePlanRequest):
     return {"status": "PLAN_APPROVED", "plan": plan.model_dump()}
 
 
+class ExecuteRunRequest(BaseModel):
+    use_nemotron: bool = False
+    query_tavily: bool = False
+
+
 @app.post("/runs/{run_id}/execute")
-async def execute_run(run_id: str):
+async def execute_run(run_id: str, req: Optional[ExecuteRunRequest] = None):
     """Executes the full defensive verification and repair pipeline with scope-guard enforcement."""
     current_db = get_db()
     record = current_db.get_run(run_id)
@@ -800,11 +805,17 @@ async def execute_run(run_id: str):
                 intent_spec_data = payload.get("parsed_spec")
                 break
 
+    # Explicit user opt-in required: presence of API keys alone makes integrations AVAILABLE,
+    # but does NOT enable them automatically. Local deterministic execution remains the default.
+    use_nemotron = bool(req and req.use_nemotron)
+    query_tavily = bool(req and req.query_tavily)
+
     pipeline_req = VerificationPipelineRequest(
         repo_path=repo_dir,
         cve_id=cve_id,
         target_file=target_file,
-        use_nemotron=True,
+        use_nemotron=use_nemotron,
+        query_tavily=query_tavily,
         intent_requirement=intent_req_text,
         intent_spec=intent_spec_data
     )
@@ -922,6 +933,8 @@ async def export_artifact(run_id: str, format: str = Query("diff", pattern="^(di
 # Section 3: Static Files UI Mount
 # ---------------------------------------------------------------------------
 
-ui_dist = Path(__file__).resolve().parent.parent.parent / "ui" / "dist"
+packaged_ui_dist = Path(__file__).resolve().parent.parent / "ui_dist"
+repo_ui_dist = Path(__file__).resolve().parent.parent.parent / "ui" / "dist"
+ui_dist = packaged_ui_dist if packaged_ui_dist.exists() else repo_ui_dist
 if ui_dist.exists():
     app.mount("/", StaticFiles(directory=str(ui_dist), html=True), name="ui")

@@ -187,11 +187,12 @@ def test_provisioning_preserves_host_venv_integrity(temp_repo_dir):
 
 @pytest.mark.container
 @pytest.mark.asyncio
-async def test_external_repository_repo_cloud_config_execution():
+async def test_external_repository_repo_cloud_config_incompatible_dependencies_fail_closed():
     """
-    Acceptance test for P0.2 / Spec §4.6:
-    Genuine external repository (real_world_eval/repo_cloud_config)
-    moves through the controlled target setup path under mandatory Tier 1 container isolation.
+    Acceptance test for Spec §4.5 / §4.6 Truthful Preflight & Zero-Trust Isolation:
+    External repository (real_world_eval/repo_cloud_config) specifies incompatible dependencies
+    (pyyaml==5.3.1 when sandbox has 6.0.1, and pytest>=8.0.0 when sandbox has 7.4.4).
+    The pipeline MUST fail closed with ENV_BUILD_FAILED and NOT_EVALUATED without executing the target.
     """
     external_repo = Path(__file__).resolve().parent.parent / "real_world_eval" / "repo_cloud_config"
     assert external_repo.exists()
@@ -207,22 +208,19 @@ async def test_external_repository_repo_cloud_config_execution():
 
     res = await VerificationPipeline.run_pipeline(req)
 
-    # Reachability path identified
-    assert res.reachability_verdict == "REACHABLE_VULNERABLE_CALL_PATH_IDENTIFIED"
+    # Truthful preflight failure: incompatible sandbox dependencies
+    assert res.final_behavioral_verdict == "ENV_BUILD_FAILED"
+    assert res.reachability_verdict == "NOT_EVALUATED"
 
-    # Pre-patch red state reproduced
-    assert res.pre_patch_result.reproduction_state == "RED_STATE_REPRODUCED"
-    assert res.pre_patch_result.exit_code == 0
+    # Environment build failed truth recorded
+    assert res.environment.provisioned is False
+    assert res.environment.failure_classification == "ENV_BUILD_FAILED"
+    assert "pytest>=8.0.0" in (res.environment.failure_reason or "") or "pyyaml==5.3.1" in (res.environment.failure_reason or "")
 
-    # Post-patch green state verified
-    assert res.post_patch_result.reproduction_state == "GREEN_STATE_BLOCKED"
-    assert res.post_patch_result.exit_code == 42
-
-    # Regressions pass
-    assert res.regression_tests.get("passed") is True
-
-    # Final verdict
-    assert res.final_behavioral_verdict == "GREEN_STATE_VERIFIED"
+    # Target harness was not executed
+    assert "skipped: environment build failed" in res.harness.harness_code.lower()
+    assert res.pre_patch_result.reproduction_state == "ENV_BUILD_FAILED"
+    assert res.isolation_attestation is None
 
 
 @pytest.mark.asyncio

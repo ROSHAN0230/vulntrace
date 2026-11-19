@@ -139,11 +139,22 @@ class TestAdversarialTier1Isolation:
             assert "FS_AUDIT:" in res.stdout
             assert "SUCCESS" not in res.stdout
             assert "LEAKED" not in res.stdout
-            assert "TAMPERED" not in res.stdout
+
+            # Account for tmpfs mount shadow:
+            # Under Linux, tempfile places host files in /tmp, which is shadowed inside
+            # the container by --tmpfs /tmp:rw,nosuid,nodev,size=64m. Writing to /tmp
+            # succeeds only within container-local in-memory tmpfs. Outside /tmp, --read-only rootfs blocks writes outright.
+            is_tmpfs_shadowed = wsl_host_file.startswith("/tmp/") or wsl_host_file == "/tmp"
+            if not is_tmpfs_shadowed:
+                assert "TAMPERED" not in res.stdout
+
             # Errno 30: Read-only file system
             assert "BLOCKED_30" in res.stdout or "Read-only file system" in res.stdout
-            # Host file remains untouched
-            assert host_file.read_text() == "EXTERNAL_HOST_DATA_SECRET_777"
+            # Ground truth: Host sentinel remains byte-for-byte untouched
+            assert host_file.exists(), "Host sentinel file disappeared"
+            assert host_file.read_text(encoding="utf-8") == "EXTERNAL_HOST_DATA_SECRET_777", (
+                f"Host sentinel file was modified! Expected 'EXTERNAL_HOST_DATA_SECRET_777', got {host_file.read_text()!r}"
+            )
         finally:
             await container_backend.cleanup_workspace(ws_id)
             if host_file.exists():

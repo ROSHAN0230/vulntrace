@@ -827,7 +827,7 @@ async def test_config_permutation_both_live(mock_httpx_transport, monkeypatch):
 # Section 6: In-Memory Mock Backend & Pipeline Integration Test (Task B)
 # ===========================================================================
 
-_AUTHORIZED_TEST_CAPABILITY_IDS: set[int] = set()
+_AUTHORIZED_TEST_CAPABILITIES: list[Any] = []
 
 
 class InMemoryMockExecutionBackend(ExecutionBackend):
@@ -865,7 +865,7 @@ class InMemoryMockExecutionBackend(ExecutionBackend):
                 "SIMULATED VERIFICATION: Emitted results simulate execution turns and do not prove real-world exploit reproduction, patch correctness, or sandbox security."
             ]
         )
-        _AUTHORIZED_TEST_CAPABILITY_IDS.add(id(caps))
+        _AUTHORIZED_TEST_CAPABILITIES.append(caps)
         return caps
 
     def is_available(self) -> bool:
@@ -1093,7 +1093,7 @@ async def test_pipeline_offline_structured_cassette_miss_degradation(mock_httpx_
     orig_enforce = SecurityPolicyEngine.enforce_operation_policy
 
     def mock_test_seam_enforce(operation, capabilities, require_high_assurance=False):
-        if id(capabilities) in _AUTHORIZED_TEST_CAPABILITY_IDS:
+        if any(capabilities is auth for auth in _AUTHORIZED_TEST_CAPABILITIES):
             return PolicyDecision(
                 allowed=True,
                 operation=operation,
@@ -1388,7 +1388,7 @@ async def test_pipeline_production_regression_and_acceptance_contracts(tmp_path,
     # Test-scoped policy seam for in-memory mock backend
     orig_enforce = SecurityPolicyEngine.enforce_operation_policy
     def mock_test_seam_enforce(operation, capabilities, require_high_assurance=False):
-        if id(capabilities) in _AUTHORIZED_TEST_CAPABILITY_IDS:
+        if any(capabilities is auth for auth in _AUTHORIZED_TEST_CAPABILITIES):
             return PolicyDecision(
                 allowed=True,
                 operation=operation,
@@ -1460,7 +1460,7 @@ async def test_pipeline_production_regression_and_acceptance_contracts(tmp_path,
                     "SYNTHETIC VERIFICATION: Emitted results simulate verified turns for testing failure branches and do not prove real sandbox security."
                 ]
             )
-            _AUTHORIZED_TEST_CAPABILITY_IDS.add(id(caps))
+            _AUTHORIZED_TEST_CAPABILITIES.append(caps)
             return caps
 
         async def execute_script(

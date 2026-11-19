@@ -25,7 +25,7 @@ export const App: React.FC = () => {
   // Theme state
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
 
-  // Mode View: Studio Workflow vs Judge Recorded Evidence Showcase
+  // Mode View: Studio Workflow vs Recorded Evidence Showcase
   const [activeView, setActiveView] = useState<'studio' | 'showcase'>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -473,7 +473,7 @@ export const App: React.FC = () => {
   // Step 5 Actions: Live Execution & Real SSE Event Stream
   // ---------------------------------------------------------------------------
 
-  const handleExecute = async () => {
+  const handleExecute = async (options?: { use_nemotron?: boolean; query_tavily?: boolean }) => {
     const runId = currentRun?.id || (currentRun as any)?.run_id;
     if (!runId) {
       setExecutionError('No active run initialized.');
@@ -511,7 +511,11 @@ export const App: React.FC = () => {
     try {
       const res = await fetch(`/runs/${runId}/execute`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          use_nemotron: Boolean(options?.use_nemotron),
+          query_tavily: Boolean(options?.query_tavily)
+        })
       });
 
       if (!res.ok) {

@@ -417,7 +417,7 @@ export const StepEvidence: React.FC<StepEvidenceProps> = ({
                   </li>
                 ))
               ) : (
-                <li className="text-xs text-slate-400 font-sans italic p-2">No external advisory URLs recorded.</li>
+                <li className="text-xs text-slate-400 font-sans italic p-2">Local metadata mode: OSV.dev advisory record active (Tavily optional).</li>
               )}
             </ul>
           </div>
@@ -436,7 +436,7 @@ export const StepEvidence: React.FC<StepEvidenceProps> = ({
           <div className="grid grid-cols-2 gap-2.5 text-xs font-mono">
             <div className="p-2.5 rounded-md bg-surface-inset border border-border-subtle">
               <span className="text-slate-400 text-[11px] font-sans font-medium block">Total Tokens:</span>
-              <span className="text-sm font-bold text-slate-100">{totalTokens.toLocaleString()}</span>
+              <span className="text-sm font-bold text-slate-100">{totalTokens > 0 ? totalTokens.toLocaleString() : '0 (Local AST Mode)'}</span>
             </div>
             <div className="p-2.5 rounded-md bg-surface-inset border border-border-subtle">
               <span className="text-slate-400 text-[11px] font-sans font-medium block">Total Latency:</span>
@@ -452,7 +452,7 @@ export const StepEvidence: React.FC<StepEvidenceProps> = ({
             </div>
           </div>
           <div className="text-[11px] font-sans text-slate-400 pt-1">
-            Model Tier: <span className="font-mono text-slate-200">Nemotron-70B-Instruct (Tier-3 Ultra)</span> | Calls: <span className="font-mono text-slate-200">{llmCalls.length}</span>
+            Model Tier: <span className="font-mono text-slate-200">{llmCalls.length > 0 ? 'Nemotron-70B-Instruct (Tier-3 Ultra)' : 'AST Deterministic Codemod (Local)'}</span> | Calls: <span className="font-mono text-slate-200">{llmCalls.length}</span>
           </div>
         </div>
       </div>

@@ -317,7 +317,7 @@ const SHOWCASE_CASES: Record<ShowcaseCaseId, ShowcaseCaseData> = {
       { label: 'Missing Dependency', value: 'flex>=0.6.2 unavailable offline' }
     ],
     notes: [
-      'Critical Hackathon Disclosure: This run DOES NOT establish successful remediation of Flasgger.',
+      'Critical Evaluation Disclosure: This run DOES NOT establish successful remediation of Flasgger.',
       'Demonstrates scientific honesty: VulnTrace reports INCONCLUSIVE rather than faking test passes or fabricating patches on incompatible runtimes.',
       'Milestone M7 operates under the authorized Option B cut-line.'
     ]
@@ -437,7 +437,7 @@ Normalized Pipeline Context Generated:
       { label: 'Canonical Hash', value: '469b2f88aa8c... (Reference Items)' }
     ],
     notes: [
-      'Provides credible evidence for Best Use of Tavily bonus: active relevance filtering and AST symbol binding.',
+      'Demonstrates threat intelligence integration: active relevance filtering and AST symbol binding.',
       'Cassette bypass proven: source tag confirmed "Tavily Intelligence API (Verified Relevant)" and latency was 2.4s (vs 1.5ms cassette).',
       'Canonical hash reflects SHA-256 of canonical reference advisory items, not ephemeral raw bytes.',
       'Source artifact: scratch/phase6_tavily_results.json.'

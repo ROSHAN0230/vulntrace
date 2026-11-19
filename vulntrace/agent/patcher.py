@@ -67,6 +67,15 @@ class RemediationPatcher:
                             # Retain first argument (payload), discard unsafe Loader kwargs
                             new_args = node.args[:1]
                             return ast.Call(func=new_func, args=new_args, keywords=[])
+                    elif node.func.attr == "extractall":
+                        # Support tarfile.extractall -> extractall(..., filter='data') (PEP 706 safe extraction)
+                        new_keywords = [
+                            kw for kw in node.keywords
+                            if kw.arg != "filter" and not (kw.arg is None and getattr(kw.value, "id", "") == "kwargs")
+                        ] + [
+                            ast.keyword(arg="filter", value=ast.Constant(value="data"))
+                        ]
+                        return ast.Call(func=node.func, args=node.args, keywords=new_keywords)
                 return self.generic_visit(node)
 
         transformer = SafeLoadTransformer()
